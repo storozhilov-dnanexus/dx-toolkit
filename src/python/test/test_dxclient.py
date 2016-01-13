@@ -5066,12 +5066,7 @@ class TestDXClientMembership(DXTestCase):
 
         cmd = "dx update member {o} {u} --level MEMBER --allow-billable-activities true --project-access CONTRIBUTE --app-access false"
         run(cmd.format(o=self.org_id, u=self.username))
-        exp_membership = {"id": self.user_id,
-                          "level": "MEMBER",
-                          "allowBillableActivities": True,
-                          "createProjectsAndApps": True,
-                          "appAccess": False,
-                          "projectAccess": "CONTRIBUTE"}
+        exp_membership.update(level="MEMBER", projectAccess="CONTRIBUTE", appAccess=False)
         membership = self._org_find_members(self.user_id)
         self.assertEqual(membership, exp_membership)
 
@@ -5098,12 +5093,7 @@ class TestDXClientMembership(DXTestCase):
 
         cmd = "dx update member {o} {u} --level MEMBER --allow-billable-activities true"
         run(cmd.format(o=self.org_id, u=self.user_id))
-        exp_membership = {"id": self.user_id,
-                          "level": "MEMBER",
-                          "allowBillableActivities": True,
-                          "createProjectsAndApps": True,
-                          "appAccess": True,
-                          "projectAccess": "UPLOAD"}
+        exp_membership.update(allowBillableActivities=True, createProjectsAndApps=True)
         membership = self._org_find_members(self.user_id)
         self.assertEqual(membership, exp_membership)
 
@@ -5120,12 +5110,7 @@ class TestDXClientMembership(DXTestCase):
 
         cmd = "dx update member {o} {u} --level MEMBER --allow-billable-activities true --project-access CONTRIBUTE --app-access false"
         run(cmd.format(o=self.org_id, u=self.user_id))
-        exp_membership = {"id": self.user_id,
-                          "level": "MEMBER",
-                          "allowBillableActivities": True,
-                          "createProjectsAndApps": True,
-                          "appAccess": False,
-                          "projectAccess": "CONTRIBUTE"}
+        exp_membership.update(level="MEMBER", projectAccess="CONTRIBUTE", appAccess=False)
         membership = self._org_find_members(self.user_id)
         self.assertEqual(membership, exp_membership)
 
