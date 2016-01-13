@@ -48,10 +48,8 @@ def get_org_invite_args(args):
         - If /org-x/invite is being called in conjunction with /user/new, then
           `_validate_new_user_input()` has been called on `args`; otherwise,
           the parser must perform all the basic input validation.
-        - `args.username` is well-formed and valid (e.g. it does not start with
-          "user-").
     """
-    org_invite_args = {"invitee": get_user_id(args.username)}
+    org_invite_args = {"invitee": get_user_id(args.username_or_user_id)}
     org_invite_args["level"] = args.level
     if "set_bill_to" in args and args.set_bill_to is True:
         # /org-x/invite is called in conjunction with /user/new.
@@ -65,7 +63,7 @@ def get_org_invite_args(args):
 
 
 def add_membership(args):
-    user_id = get_user_id(args.username)
+    user_id = get_user_id(args.username_or_user_id)
 
     try:
         dxpy.api.org_find_members(args.org_id, {"id": [user_id]})["results"][0]
@@ -84,14 +82,14 @@ def add_membership(args):
 
 def _get_org_remove_member_args(args):
     remove_member_args = {
-        "user": get_user_id(args.username),
+        "user": get_user_id(args.username_or_user_id),
         "revokeProjectPermissions": args.revoke_project_permissions,
         "revokeAppPermissions": args.revoke_app_permissions}
     return remove_member_args
 
 
 def remove_membership(args):
-    user_id = get_user_id(args.username)
+    user_id = get_user_id(args.username_or_user_id)
 
     try:
         dxpy.api.org_find_members(args.org_id, {"id": [user_id]})["results"][0]
@@ -133,7 +131,7 @@ def remove_membership(args):
 
 
 def _get_org_set_member_access_args(args, current_level):
-    user_id = get_user_id(args.username)
+    user_id = get_user_id(args.username_or_user_id)
     org_set_member_access_input = {user_id: {}}
 
     if args.level is not None:
@@ -162,7 +160,7 @@ def _get_org_set_member_access_args(args, current_level):
 
 
 def update_membership(args):
-    user_id = get_user_id(args.username)
+    user_id = get_user_id(args.username_or_user_id)
 
     try:
         member_access = dxpy.api.org_find_members(args.org_id, {"id": [user_id]})["results"][0]
