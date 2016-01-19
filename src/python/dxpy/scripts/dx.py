@@ -165,12 +165,12 @@ else:
 # subcommand with further subcommands, then the second word must be an
 # appropriate sub-subcommand.
 class DXCLICompleter():
-    subcommands = {'find': ['data ', 'projects ', 'apps ', 'jobs ', 'executions ', 'analyses ', 'org_members ',
-                            'org_projects ', 'orgs '],
+    subcommands = {'find': ['data ', 'projects ', 'apps ', 'jobs ', 'executions ', 'analyses ', 'orgs ', 'org '],
                    'new': ['record ', 'project ', 'workflow ', 'org ', 'user '],
                    'add': ['developers ', 'users ', 'stage ', 'member '],
                    'remove': ['developers ', 'users ', 'stage ', 'member '],
-                   'update': ['stage ', 'workflow ', 'org ', 'member ']}
+                   'update': ['stage ', 'workflow ', 'org ', 'member '],
+                   'org': ['projects ', 'members ']}
 
     silent_commands = set(['import'])
 
