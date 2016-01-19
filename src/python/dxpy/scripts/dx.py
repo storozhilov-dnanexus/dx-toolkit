@@ -4469,24 +4469,12 @@ parser_find_org = subparsers_find.add_parser(
 )
 subparsers_find_org = parser_find_org.add_subparsers()
 
-parser_find_org_members2 = subparsers_find_org.add_parser(
+parser_find_org_members = subparsers_find_org.add_parser(
     'members',
     help='List members in the specified org',
     description=fill('Finds members in the specified org subject to the given search parameters'),
     parents=[stdout_args, json_arg, delim_arg, env_args],
     prog='dx find org members'
-)
-parser_find_org_members2.add_argument('org_id', help='Org ID')
-parser_find_org_members2.add_argument('--level', choices=["ADMIN", "MEMBER"], help='Restrict the result set to contain only members at the specified membership level.')
-parser_find_org_members2.set_defaults(func=org_find_members)
-register_subparser(parser_find_org_members2, subparsers_action=subparsers_find, categories='other')
-
-parser_find_org_members = subparsers_find.add_parser(
-    'org_members',
-    help='List members in the specified org',
-    description=fill('Finds members in the specified org subject to the given search parameters'),
-    parents=[stdout_args, json_arg, delim_arg, env_args],
-    prog='dx find org_members'
 )
 parser_find_org_members.add_argument('org_id', help='Org ID')
 parser_find_org_members.add_argument('--level', choices=["ADMIN", "MEMBER"], help='Restrict the result set to contain only members at the specified membership level.')

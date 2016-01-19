@@ -3899,32 +3899,32 @@ class TestDXClientFindInOrg(DXTestCase):
 
     def test_dx_find_org_members_negative(self):
         # No org id
-        with self.assertSubprocessFailure(stderr_regexp='dx find org_members: error: too few arguments', exit_code=2):
-            run("dx find org_members")
+        with self.assertSubprocessFailure(stderr_regexp='dx find org members: error: too few arguments', exit_code=2):
+            run("dx find org members")
 
         # No input to --level
         with self.assertSubprocessFailure(stderr_regexp='error: argument --level: expected one argument', exit_code=2):
-            run("dx find org_members org-piratelabs --level")
+            run("dx find org members org-piratelabs --level")
 
     def test_dx_find_org_members(self):
         org_members = [self.user_alice, self.user_bob]  # sorted ascending by user ID
         org_members.sort()
 
         # Basic test to check consistency of client output to directly invoking API
-        output = run("dx find org_members org-piratelabs --brief").strip().split("\n")
+        output = run("dx find org members org-piratelabs --brief").strip().split("\n")
         dx_api_output = dxpy.api.org_find_members(self.org_id)
         self.assertEqual(output, [member['id'] for member in dx_api_output['results']])
         self.assertEqual(output, org_members)
 
         # With --level flag
-        output = run("dx find org_members org-piratelabs --level {l} --brief".format(l="ADMIN")).strip().split("\n")
+        output = run("dx find org members org-piratelabs --level {l} --brief".format(l="ADMIN")).strip().split("\n")
         self.assertItemsEqual(output, [self.user_alice])
 
-        output = run("dx find org_members org-piratelabs --level {l} --brief".format(l="MEMBER")).strip().split("\n")
+        output = run("dx find org members org-piratelabs --level {l} --brief".format(l="MEMBER")).strip().split("\n")
         self.assertItemsEqual(output, [self.user_bob])
 
     def test_dx_find_org_members_format(self):
-        cmd = "dx find org_members org-piratelabs {opts}"
+        cmd = "dx find org members org-piratelabs {opts}"
 
         # Assert that only member ids are returned, line-separated
         output = run(cmd.format(opts="--brief")).strip().split("\n")
