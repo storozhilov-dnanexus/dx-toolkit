@@ -4462,12 +4462,13 @@ register_parser(parser_find_projects, subparser_action=subparsers_find, categori
 
 parser_find_org = subparsers_find.add_parser(
     "org",
-    help="List entities in the specified org",
-    description=fill("Finds entities in the specified org subject to the given search parameters"),
-    parents=[],
-    prog="dx find org"
+    help="List entities within a specific org",
+    description=fill("List entities within a specific org."),
+    prog="dx find org",
 )
+
 subparsers_find_org = parser_find_org.add_subparsers()
+subparsers_find_org.metavar = "entities"
 
 parser_find_org_members = subparsers_find_org.add_parser(
     'members',
