@@ -4466,8 +4466,9 @@ parser_find_org = subparsers_find.add_parser(
     description=fill("List entities within a specific org."),
     prog="dx find org",
 )
+register_parser(parser_find_org, subparser_action=subparsers_find)
 
-subparsers_find_org = parser_find_org.add_subparsers()
+subparsers_find_org = parser_find_org.add_subparsers(parser_class=DXArgumentParser)
 subparsers_find_org.metavar = "entities"
 
 parser_find_org_members = subparsers_find_org.add_parser(
@@ -4480,7 +4481,7 @@ parser_find_org_members = subparsers_find_org.add_parser(
 parser_find_org_members.add_argument('org_id', help='Org ID')
 parser_find_org_members.add_argument('--level', choices=["ADMIN", "MEMBER"], help='Restrict the result set to contain only members at the specified membership level.')
 parser_find_org_members.set_defaults(func=org_find_members)
-register_parser(parser_find_org_members, subparser_action=subparsers_find, categories='other')
+register_parser(parser_find_org_members, subparser_action=subparsers_find_org, categories='other')
 
 parser_find_org_projects = subparsers_find_org.add_parser(
     'projects',
@@ -4500,7 +4501,7 @@ find_org_projects_public.add_argument('--private-only', dest='public', help='Inc
 parser_find_org_projects.add_argument('--created-after', help='Date (e.g. 2012-01-31) or integer timestamp after which the project was created (negative number means ms in the past, or use suffix s, m, h, d, w, M, y). Integer timestamps will be parsed as milliseconds since epoch.')
 parser_find_org_projects.add_argument('--created-before', help='Date (e.g. 2012-01-31) or integer timestamp before which the project was created (negative number means ms in the past, or use suffix s, m, h, d, w, M, y). Integer timestamps will be parsed as milliseconds since epoch.')
 parser_find_org_projects.set_defaults(func=org_find_projects)
-register_parser(parser_find_org_projects, subparser_action=subparsers_find, categories='data')
+register_parser(parser_find_org_projects, subparser_action=subparsers_find_org, categories='data')
 
 parser_find_orgs = subparsers_find.add_parser(
     "orgs",
