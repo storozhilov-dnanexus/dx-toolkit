@@ -44,7 +44,8 @@ endif
 
 export DNANEXUS_HOME=$(CURDIR)/..
 export PATH := $(DNANEXUS_HOME)/build/bin:$(PATH)
-export DX_PY_ENV=$(DNANEXUS_HOME)/build/py27_env
+export DX_PY_ENV=$(DNANEXUS_HOME)/build/py_env
+export DNANEXUS_LIBDIR := $(DNANEXUS_HOME)/share/dnanexus/lib
 
 # Short-circuit sudo when running as root. In a chrooted environment we are
 # likely to be running as root already, and sudo may not be present on minimal
@@ -112,42 +113,23 @@ cpp: api_wrappers
 	cp -a cpp "$(DNANEXUS_HOME)/share/dnanexus/src"
 
 src_libs: api_wrappers
-	$(eval DNANEXUS_LIBDIR := "$(DNANEXUS_HOME)/share/dnanexus/lib")
 	mkdir -p "$(DNANEXUS_LIBDIR)"
 	cp -R -v bash "$(DNANEXUS_LIBDIR)"
 	mkdir -p "$(DNANEXUS_HOME)/lib/perl5"
 	cp -R -v perl/lib/* "$(DNANEXUS_HOME)/lib/perl5/"
 
-python_deps: $(DX_PY_ENV)/lib
+PYTHON_LIBDIR := $(DNANEXUS_LIBDIR)/python2.7/site-packages
 
-$(DX_PY_ENV)/lib: python/requirements*.txt
+python: $(DNANEXUS_HOME)/bin/dx api_wrappers toolkit_version
+
+$(DNANEXUS_HOME)/bin/dx: python/requirements*.txt
 	python -c 'import sys; exit("dx-toolkit is not compatible with Python < 2.7" if sys.version_info < (2, 7) else 0)'
+	rm -rf "$(DNANEXUS_HOME)/share/dnanexus/lib/python2.7"
 	rm -rf "$(DX_PY_ENV)"
 	virtualenv --python=python "$(DX_PY_ENV)"
 	virtualenv --relocatable "$(DX_PY_ENV)"
-	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --upgrade --install-option="--install-lib=$(DX_PY_ENV)/lib/python2.7/site-packages" -r python/requirements_setuptools.txt)
-	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --ignore-installed --install-option="--install-lib=$(DX_PY_ENV)/lib/python2.7/site-packages" -r python/requirements.txt -r python/requirements_dxfs.txt)
-ifeq ($(UNAME), Darwin)
-	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --ignore-installed --install-option="--install-lib=$(DX_PY_ENV)/lib/python2.7/site-packages" -r python/requirements_readline.txt)
-endif
-ifdef DNANEXUS_INSTALL_PYTHON_TEST_DEPS
-	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --ignore-installed --install-option="--install-lib=$(DX_PY_ENV)/lib/python2.7/site-packages" -r python/requirements_test.txt)
-endif
-
-# We are going to install libraries to lib/python2.7 and then move them
-# elsewhere (to share/dnanexus/lib/python2.7). Modify PYTHONPATH temporarily so
-# setup.py doesn't complain.
-python: api_wrappers toolkit_version python_deps
-	rm -rf "$(DNANEXUS_HOME)/share/dnanexus/lib/python2.7"
-	mkdir -p "$(DNANEXUS_HOME)/lib/python2.7/site-packages"
-	mkdir -p "$(DNANEXUS_HOME)/share/dnanexus/lib"
-	cp -a "$(DX_PY_ENV)/lib/python2.7/site-packages" "$(DNANEXUS_HOME)/lib/python2.7/"
-	cp -a "$(DX_PY_ENV)/bin/"*python-argcomplete* "$(DNANEXUS_HOME)/bin/"
-ifdef DNANEXUS_INSTALL_PYTHON_TEST_DEPS
-	-cp -af "$(DX_PY_ENV)"/bin/coverage* "$(DNANEXUS_HOME)/bin/"
-endif
-	(source ../environment; source "$(DX_PY_ENV)/bin/activate"; export PYTHONPATH="$(DNANEXUS_HOME)/lib/python2.7/site-packages:${PYTHONPATH}"; cd python; python ./setup.py build; python ./setup.py install --install-lib="$(DNANEXUS_HOME)/lib/python2.7/site-packages" --install-scripts="$(DNANEXUS_HOME)/bin"; mv $(DNANEXUS_HOME)/lib/python2.7 $(DNANEXUS_HOME)/share/dnanexus/lib)
-	rm -f ../bin/easy_install* ../bin/xattr
+	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --upgrade -r python/requirements_setuptools.txt)
+	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; cd python; pip install --ignore-installed --install-option="--install-lib=$(PYTHON_LIBDIR)" --install-option="--install-scripts=$(DNANEXUS_HOME)/bin" .)
 
 # TODO: fix up perl and java targets
 
