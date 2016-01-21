@@ -124,8 +124,7 @@ python: api_wrappers toolkit_version $(DNANEXUS_HOME)/bin/dx
 
 $(DNANEXUS_HOME)/bin/dx: $(shell find python/{dxpy,scripts,requirements*,setup*} -not -name toolkit_version*)
 	python -c 'import sys; exit("dx-toolkit is not compatible with Python < 2.7" if sys.version_info < (2, 7) else 0)'
-	rm -rf "$(DNANEXUS_HOME)/share/dnanexus/lib/python2.7"
-	rm -rf "$(DX_PY_ENV)"
+	rm -rf "$(PYTHON_LIBDIR)" "$(DX_PY_ENV)"
 	virtualenv --python=python "$(DX_PY_ENV)"
 	virtualenv --relocatable "$(DX_PY_ENV)"
 	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --upgrade -r python/requirements_setuptools.txt)
