@@ -127,7 +127,6 @@ $(DNANEXUS_HOME)/bin/dx: $(shell find python/{dxpy,scripts,requirements*,setup*}
 	rm -rf "$(PYTHON_LIBDIR)" "$(DX_PY_ENV)"
 	virtualenv --python=python "$(DX_PY_ENV)"
 	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --upgrade -r python/requirements_setuptools.txt)
-	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; cd python; pip wheel .)
 	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; cd python; pip install --ignore-installed --prefix="$(DNANEXUS_HOME)" .)
 	mkdir -p "$$(dirname '$(PYTHON_LIBDIR)')"
 	mv "$(DNANEXUS_HOME)"/lib/python?.?/site-packages "$(PYTHON_LIBDIR)"
