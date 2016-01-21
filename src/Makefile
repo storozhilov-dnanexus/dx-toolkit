@@ -130,6 +130,7 @@ $(DNANEXUS_HOME)/bin/dx: $(shell find python/{dxpy,scripts,requirements*,setup*}
 	virtualenv --relocatable "$(DX_PY_ENV)"
 	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --upgrade -r python/requirements_setuptools.txt)
 	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; cd python; pip install --ignore-installed --install-option="--install-lib=$(PYTHON_LIBDIR)" --install-option="--install-scripts=$(DNANEXUS_HOME)/bin" .)
+	rm -f $(DNANEXUS_HOME)/bin/xattr
 
 # TODO: fix up perl and java targets
 
