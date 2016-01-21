@@ -120,7 +120,7 @@ src_libs: api_wrappers
 
 PYTHON_LIBDIR := $(DNANEXUS_LIBDIR)/python2.7/site-packages
 
-python: $(DNANEXUS_HOME)/bin/dx api_wrappers toolkit_version
+python: api_wrappers toolkit_version $(DNANEXUS_HOME)/bin/dx
 
 $(DNANEXUS_HOME)/bin/dx: $(shell find python/{dxpy,scripts,requirements*,setup*} -not -name toolkit_version*)
 	python -c 'import sys; exit("dx-toolkit is not compatible with Python < 2.7" if sys.version_info < (2, 7) else 0)'
