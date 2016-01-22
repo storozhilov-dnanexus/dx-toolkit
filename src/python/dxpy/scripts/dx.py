@@ -3364,7 +3364,7 @@ class DXArgumentParser(argparse.ArgumentParser):
 def register_parser(parser, subparsers_action=None, categories=('other', ), add_help=True):
     """Attaches `parser` to the global `parser_map`. Optionally adds the
     helpstring of `parser`, if `add_help` is truthy, into the output of `dx
-    help...` based on `categories`.
+    help category`, for each `category` in `categories`.
 
     `subparsers_action`, if not None, is a special action object that is
     returned by `ArgumentParser.add_subparsers(...)`.
