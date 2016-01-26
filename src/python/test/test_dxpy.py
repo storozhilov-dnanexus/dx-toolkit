@@ -20,16 +20,17 @@
 from __future__ import print_function, unicode_literals, division, absolute_import
 
 import os, unittest, tempfile, filecmp, time, json, sys
-import requests
 import string
 import subprocess
 
+import requests
+from requests.packages.urllib3.exceptions import SSLError
+
 import dxpy
 import dxpy_testutil as testutil
-from dxpy.exceptions import (DXAPIError, DXFileError, DXError, DXJobFailureError, ServiceUnavailable, InvalidInput,
-                             ResourceNotFound)
+from dxpy.exceptions import (DXAPIError, DXFileError, DXError, DXJobFailureError, ResourceNotFound)
 from dxpy.utils import pretty_print, warn
-from dxpy.utils.resolver import resolve_path, resolve_existing_path, ResolutionError
+from dxpy.utils.resolver import resolve_path, resolve_existing_path, ResolutionError, is_project_explicit
 
 def get_objects_from_listf(listf):
     objects = []
@@ -238,10 +239,10 @@ class TestDXFileFunctions(unittest.TestCase):
     def test_generate_read_requests(self):
         with testutil.temporary_project() as host:
             dxfile = dxpy.upload_string("foo", project=host.get_id(), wait_on_close=True)
-            with testutil.temporary_project() as p, self.assertRaises(TypeError):
+            with testutil.temporary_project() as p, self.assertRaises(ResourceNotFound):
                 # The file doesn't exist in this project
                 list(dxfile._generate_read_requests(project=p.get_id()))
-            with self.assertRaises(TypeError):
+            with self.assertRaises(ResourceNotFound):
                 # This project doesn't even exist
                 list(dxfile._generate_read_requests(project="project-012301230123012301230123"))
 
@@ -384,14 +385,75 @@ class TestDXFile(unittest.TestCase):
             buf = same_dxfile.read()
             self.assertEqual(self.foo_str[-1:], buf)
 
-    def test_read_with_project(self):
+    def test_download_project_selection(self):
+        with testutil.temporary_project() as p, testutil.temporary_project() as p2:
+            # Same file is available in both projects
+            f = dxpy.upload_string(self.foo_str, project=p.get_id(), wait_on_close=True)
+            dxpy.api.project_clone(p.get_id(), {"objects": [f.get_id()], "project": p2.get_id()})
+
+            # Project specified in handler: bill that project for download
+            with tempfile.NamedTemporaryFile() as tmp:
+                os.environ['_DX_DUMP_BILLED_PROJECT'] = tmp.name
+                f1 = dxpy.DXFile(dxid=f.get_id(), project=p.get_id())
+                f1.read(4)
+                with open(tmp.name, "r") as fd:
+                    self.assertEqual(fd.read(), p.get_id())
+
+            # Project specified in read() call: overrides project specified in
+            # handler
+            with tempfile.NamedTemporaryFile() as tmp:
+                os.environ['_DX_DUMP_BILLED_PROJECT'] = tmp.name
+                f2 = dxpy.DXFile(dxid=f.get_id(), project=p.get_id())
+                f2.read(4, project=p2.get_id())
+                with open(tmp.name, "r") as fd:
+                    self.assertEqual(fd.read(), p2.get_id())
+
+            # Project specified in neither handler nor read() call: set no hint
+            # when making API call
+            with tempfile.NamedTemporaryFile() as tmp:
+                os.environ['_DX_DUMP_BILLED_PROJECT'] = tmp.name
+                f3 = dxpy.DXFile(dxid=f.get_id())  # project defaults to project context
+                f3.read(4)
+                with open(tmp.name, "r") as fd:
+                    self.assertEqual(fd.read(), "")
+
+            # Project specified in read() that doesn't contain the file. The
+            # call should fail.
+            dxpy.api.project_remove_objects(p2.get_id(), {"objects": [f.get_id()]})
+            f4 = dxpy.DXFile(dxid=f.get_id())
+            with self.assertRaises(ResourceNotFound):
+                f4.read(4, project=p2.get_id())
+
+            # Project specified in handler that doesn't contain the file. The
+            # call must succeed for backward compatibility (and bill no project
+            # in particular).
+            with tempfile.NamedTemporaryFile() as tmp:
+                os.environ['_DX_DUMP_BILLED_PROJECT'] = tmp.name
+                f5 = dxpy.DXFile(dxid=f.get_id(), project=p2.get_id())
+                f5.read(4)
+                with open(tmp.name, "r") as fd:
+                    self.assertEqual(fd.read(), "")
+
+            del os.environ['_DX_DUMP_BILLED_PROJECT']
+
+    def test_read_with_invalid_project(self):
         dxfile = dxpy.upload_string(self.foo_str, wait_on_close=True)
-        with testutil.temporary_project() as p, self.assertRaises(TypeError):
+        with testutil.temporary_project() as p, self.assertRaises(ResourceNotFound):
             # The file doesn't exist in this project
             dxfile.read(project=p.get_id())
-        with self.assertRaises(TypeError):
+        # Try the same thing again, just to make sure read() doesn't have the
+        # side effect of wedging the DXFile when it fails
+        with testutil.temporary_project() as p, self.assertRaises(ResourceNotFound):
+            dxfile.read(project=p.get_id())
+        # Try the same thing again, now we should be able to succeed
+        self.assertEqual(dxfile.read(), self.foo_str)
+
+        dxfile = dxpy.upload_string(self.foo_str, wait_on_close=True)
+        with self.assertRaises(ResourceNotFound):
             # This project doesn't even exist
             dxfile.read(project="project-012301230123012301230123")
+        # Try the same thing again, now we should be able to succeed
+        self.assertEqual(dxfile.read(), self.foo_str)
 
     def test_dxfile_sequential_optimization(self):
         # Make data longer than 128k to trigger the
@@ -457,18 +519,18 @@ class TestDXFile(unittest.TestCase):
 
     def test_download_url_helper(self):
         dxfile = dxpy.upload_string(self.foo_str, wait_on_close=True)
-        for opts in {}, {"preauthenticated": True, "filename": "foo"}:
-            # File download token/URL is cached
-            dxfile = dxpy.open_dxfile(dxfile.get_id())
-            url1 = dxfile.get_download_url(**opts)
-            url2 = dxfile.get_download_url(**opts)
-            self.assertEqual(url1, url2)
-            # Cache is invalidated when the client knows the token has expired
-            # (subject to clock skew allowance of 60s)
-            dxfile = dxpy.open_dxfile(dxfile.get_id())
-            url3 = dxfile.get_download_url(duration=60, **opts)
-            url4 = dxfile.get_download_url(**opts)
-            self.assertNotEqual(url3, url4)
+        opts = {"preauthenticated": True, "filename": "foo"}
+        # File download token/URL is cached
+        dxfile = dxpy.open_dxfile(dxfile.get_id())
+        url1 = dxfile.get_download_url(**opts)
+        url2 = dxfile.get_download_url(**opts)
+        self.assertEqual(url1, url2)
+        # Cache is invalidated when the client knows the token has expired
+        # (subject to clock skew allowance of 60s)
+        dxfile = dxpy.open_dxfile(dxfile.get_id())
+        url3 = dxfile.get_download_url(duration=60, **opts)
+        url4 = dxfile.get_download_url(**opts)
+        self.assertNotEqual(url3, url4)
 
     def test_download_url_rejects_invalid_project(self):
         dxfile = dxpy.upload_string(self.foo_str, wait_on_close=True)
@@ -2129,6 +2191,39 @@ class TestHTTPResponses(unittest.TestCase):
         res = dxpy.DXHTTPRequest("/system/whoami", {}, want_full_response=True)
         self.assertTrue("CONTENT-type" in res.headers)
 
+    def test_ssl_options(self):
+        dxpy.DXHTTPRequest("/system/whoami", {}, verify=False)
+        dxpy.DXHTTPRequest("/system/whoami", {}, verify=requests.certs.where())
+        dxpy.DXHTTPRequest("/system/whoami", {}, verify=requests.certs.where(), cert_file=None, key_file=None)
+        with self.assertRaises(TypeError):
+            dxpy.DXHTTPRequest("/system/whoami", {}, cert="nonexistent")
+        if dxpy.APISERVER_PROTOCOL == "https":
+            with self.assertRaisesRegexp(SSLError, "file"):
+                dxpy.DXHTTPRequest("/system/whoami", {}, verify="nonexistent")
+            with self.assertRaisesRegexp((SSLError, IOError), "file"):
+                dxpy.DXHTTPRequest("/system/whoami", {}, cert_file="nonexistent")
+
+    def test_fake_errors(self):
+        dxpy.DXHTTPRequest('/system/fakeError', {'errorType': 'Valid JSON'}, always_retry=True)
+
+        # Minimal latency with retries, in seconds. This makes sure we actually did a retry.
+        min_sec_with_retries = 1
+        max_num_retries = 2
+        start_time = time.time()
+        with self.assertRaises(ValueError):
+            dxpy.DXHTTPRequest('/system/fakeError', {'errorType': 'Invalid JSON'},
+                               max_retries=max_num_retries, always_retry=True)
+        end_time = time.time()
+        self.assertGreater(end_time - start_time, min_sec_with_retries)
+
+        start_time = time.time()
+        with self.assertRaises(ValueError):
+            dxpy.DXHTTPRequest('/system/fakeError', {'errorType': 'Error not decodeable'},
+                               max_retries=max_num_retries, always_retry=True)
+        end_time = time.time()
+        self.assertGreater(end_time - start_time, min_sec_with_retries)
+
+
 class TestDataobjectFunctions(unittest.TestCase):
     def setUp(self):
         setUpTempProjects(self)
@@ -2444,6 +2539,33 @@ class TestResolver(testutil.DXTestCase):
         self.assertEqual(results[0][0]["id"], record_id0)
         self.assertEqual(results[1][0]["id"], record_id1)
         self.assertEqual(results[2][0]["id"], record_id2)
+
+    def test_is_project_explicit(self):
+        # All files specified by path are understood as explicitly indicating a
+        # project, because (if they actually resolve to something) such paths
+        # can only ever be understood in the context of a single project.
+        self.assertTrue(is_project_explicit("./path/to/my/file"))
+        self.assertTrue(is_project_explicit("myproject:./path/to/my/file"))
+        self.assertTrue(is_project_explicit("project-012301230123012301230123:./path/to/my/file"))
+        # Paths that specify an explicit project with a colon are understood as
+        # explicitly indicating a project (even if the file is specified by ID)
+        self.assertTrue(is_project_explicit("projectname:file-012301230123012301230123"))
+        self.assertTrue(is_project_explicit("project-012301230123012301230123:file-012301230123012301230123"))
+        self.assertTrue(is_project_explicit(
+            '{"$dnanexus_link": {"project": "project-012301230123012301230123", "id": "file-012301230123012301230123"}'
+        ))
+        # A bare file ID is NOT treated as having an explicit project. Even if
+        # the user's configuration supplies a project context that contains
+        # this file, that's not clear enough.
+        self.assertFalse(is_project_explicit("file-012301230123012301230123"))
+        self.assertFalse(is_project_explicit('{"$dnanexus_link": "file-012301230123012301230123"}'))
+        # Colon without project in front of it is understood to mean the
+        # current project
+        self.assertTrue(is_project_explicit(":file-012301230123012301230123"))
+        # Every job exists in a single project so we'll treat JBORs as being
+        # identified with a single project, too
+        self.assertTrue(is_project_explicit("job-012301230123012301230123:ofield"))
+
 
 if __name__ == '__main__':
     if dxpy.AUTH_HELPER is None:

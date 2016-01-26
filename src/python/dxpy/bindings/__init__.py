@@ -20,13 +20,14 @@ object handlers, and its subclass :class:`DXDataObject` is the abstract
 base class for all remote data object handlers.
 """
 
-from __future__ import (print_function, unicode_literals)
+from __future__ import print_function, unicode_literals, division, absolute_import
 
 import time, copy, re
 
 import dxpy.api
 from ..exceptions import (DXError, DXAPIError, DXFileError, DXGTableError, DXSearchError, DXAppletError,
                           DXJobFailureError, AppError, AppInternalError, DXCLIError)
+from ..compat import basestring
 
 def verify_string_dxid(dxid, expected_classes):
     '''
@@ -664,4 +665,4 @@ from .auth import user_info, whoami
 from .dxdataobject_functions import dxlink, is_dxlink, get_dxlink_ids, get_handler, describe, get_details, remove
 from .search import (find_data_objects, find_executions, find_jobs, find_analyses, find_projects, find_apps,
                      find_one_data_object, find_one_project, find_one_app, resolve_data_objects, find_orgs,
-                     org_find_projects)
+                     org_find_members, org_find_projects)

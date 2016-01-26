@@ -23,15 +23,15 @@ names in the syntax of
 For more details, see external documentation [TODO: Put link here].
 '''
 
-from __future__ import (print_function, unicode_literals)
+from __future__ import print_function, unicode_literals, division, absolute_import
 
 import os, sys, json, re
 
 import dxpy
 from .describe import get_ls_l_desc
 from ..exceptions import DXError
-from ..compat import str, input
-from ..cli import INTERACTIVE_CLI
+from ..compat import str, input, basestring
+from ..cli import try_call, INTERACTIVE_CLI
 
 def pick(choices, default=None, str_choices=None, prompt=None, allow_mult=False, more_choices=False):
     '''
@@ -145,6 +145,7 @@ class ResolutionError(DXError):
 data_obj_pattern = re.compile('^(record|gtable|applet|file|workflow)-[0-9A-Za-z]{24}$')
 hash_pattern = re.compile('^(record|gtable|app|applet|workflow|job|analysis|project|container|file)-[0-9A-Za-z]{24}$')
 nohash_pattern = re.compile('^(user|org|app|team)-')
+jbor_pattern = re.compile('^(job|analysis)-[0-9A-Za-z]{24}:[a-zA-Z_][0-9a-zA-Z_]*$')
 
 def is_hashid(string):
     return hash_pattern.match(string) is not None
@@ -169,6 +170,47 @@ def is_nohash_id(string):
 
 def is_glob_pattern(string):
     return (get_last_pos_of_char('*', string) >= 0) or (get_last_pos_of_char('?', string) >= 0)
+
+
+def is_jbor_str(string):
+    return jbor_pattern.match(string) is not None
+
+
+def is_project_explicit(path):
+    """
+    Returns True if the specified path explicitly specifies a project.
+    """
+    # This method encodes our rules for deciding when a path shows an explicit
+    # affinity to a particular project. This is a stronger notion than just
+    # saying that the path resolves to an object in that project.
+    #
+    # For an explanation of the rules, see the unit tests
+    # (test_dxpy.TestResolver.test_is_project_explicit).
+    #
+    # Note, this method need not validate that the path can otherwise be
+    # resolved; it can assume this as a precondition.
+    path = _maybe_convert_stringified_dxlink(path)
+    return not is_hashid(path)
+
+
+def object_exists_in_project(obj_id, proj_id):
+    '''
+    :param obj_id: object ID
+    :type obj_id: str
+    :param proj_id: project ID
+    :type proj_id: str
+
+    Returns True if the specified data object can be found in the specified
+    project.
+    '''
+    if obj_id is None:
+        raise ValueError("Expected obj_id to be a string")
+    if proj_id is None:
+        raise ValueError("Expected proj_id to be a string")
+    if not is_container_id(proj_id):
+        raise ValueError('Expected %r to be a container ID' % (proj_id,))
+    return try_call(dxpy.DXHTTPRequest, '/' + obj_id + '/describe', {'project': proj_id})['project'] == proj_id
+
 
 # Special characters in bash to be escaped: #?*: ;&`"'/!$({[<>|~
 def escaper(match):
@@ -361,6 +403,21 @@ def resolve_container_id_or_name(raw_string, is_error=False, multi=False):
         return [result['id'] for result in results]
 
 
+def _maybe_convert_stringified_dxlink(path):
+    try:
+        possible_hash = json.loads(path)
+        if isinstance(possible_hash, dict) and '$dnanexus_link' in possible_hash:
+            if isinstance(possible_hash['$dnanexus_link'], basestring):
+                return possible_hash['$dnanexus_link']
+            elif (isinstance(possible_hash['$dnanexus_link'], dict) and
+                  isinstance(possible_hash['$dnanexus_link'].get('project', None), basestring) and
+                  isinstance(possible_hash['$dnanexus_link'].get('id', None), basestring)):
+                return possible_hash['$dnanexus_link']['project'] + ':' + possible_hash['$dnanexus_link']['id']
+    except:
+        pass
+    return path
+
+
 def resolve_path(path, expected=None, multi_projects=False, allow_empty_string=True):
     '''
     :param path: A path to a data object to attempt to resolve
@@ -421,15 +478,7 @@ def resolve_path(path, expected=None, multi_projects=False, allow_empty_string=T
 
     if path == '' and not allow_empty_string:
         raise ResolutionError('Cannot parse ""; expected the path to be a non-empty string')
-    try:
-        possible_hash = json.loads(path)
-        if isinstance(possible_hash, dict) and '$dnanexus_link' in possible_hash:
-            if isinstance(possible_hash['$dnanexus_link'], basestring):
-                path = possible_hash['$dnanexus_link']
-            elif isinstance(possible_hash['$dnanexus_link'], dict) and isinstance(possible_hash['$dnanexus_link'].get('project', None), basestring) and isinstance(possible_hash['$dnanexus_link'].get('id', None), basestring):
-                path = possible_hash['$dnanexus_link']['project'] + ':' + possible_hash['$dnanexus_link']['id']
-    except:
-        pass
+    path = _maybe_convert_stringified_dxlink(path)
 
     # Easy case: ":"
     if path == ':':

@@ -27,7 +27,7 @@ job creating a subjob.
 
 """
 
-from __future__ import (print_function, unicode_literals)
+from __future__ import print_function, unicode_literals, division, absolute_import
 
 import os, time
 
@@ -35,6 +35,7 @@ import dxpy
 from . import DXObject, DXDataObject, DXJobFailureError, verify_string_dxid
 from ..exceptions import DXError
 from ..utils.local_exec_utils import queue_entry_point
+from ..compat import basestring
 
 #########
 # DXJob #

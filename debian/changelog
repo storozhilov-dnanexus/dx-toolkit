@@ -1,3 +1,87 @@
+dx-toolkit (0.177.0) precise; urgency=low
+
+  * make python: don't instruct pip on how to use wheels
+  * dxpy: clean up and normalize exception descriptions
+  * Cleanup of exception handling for http errors
+  * Add missing subcommands to `dx sh` completer class
+  * Allow insecure download of Python on CentOS
+  * Fix changelog
+
+ -- Kaveh Nafissi <knafissi@dnanexus.com>  Thu, 21 Jan 2016 20:20:22 +0000
+
+dx-toolkit (0.176.0) precise; urgency=low
+
+  * PTFM-17107 Modify I/Os of "dx {add,remove,update} member"
+  * Fake errors generation and testing
+  * PTFM-17058 Be paranoid about closure variable scope
+  * dxpy: remove unneeded PyPI directive; indicate universal wheel
+  * Bump beautifulsoup4 dependency from v4.3.2 to v4.4.1
+  * Remove heading for empty section
+  * PTFM-17092 Demoting org member does not require membership permission flags
+  * Don't make any apps default to 14.04 yet
+  * Update test for a8d1911
+  * PTFM-16817 dx-app-wizard instance type selector
+  * PTFM-16894 Increment libcurl version to 7.45.0
+  * Update Readme.md
+  * Add omit-resources feature
+  * Fix tests for 571ce5c
+  * dxpy: Memoize CA certs location
+  * PTFM-16917 dxpy: Fix handling of SSL certificate options
+  * PTFM-16667 Remove /org-xxxx/getMemberAccess invocations from client
+  * Fix `dx new user` printing
+  * Update __future__ imports in Python API wrappers generator
+  * Use integer division in describe.py (fixup for 84f2346)
+  * PTFM-16905 dx update member optional level argument
+  * Increase entropy of random org handle generator used in unit tests
+  * Fix bug in `dx new user` with uppercase username args
+  * Fix copyright date in Sphinx docs
+
+ -- Kaveh Nafissi <knafissi@dnanexus.com>  Thu, 14 Jan 2016 23:58:53 +0000
+
+dx-toolkit (0.175.0) precise; urgency=low
+
+  * Bug fixes
+
+ -- Phil Sung <psung@dnanexus.com>  Wed, 16 Dec 2015 21:21:26 +0000
+
+dx-toolkit (0.174.0) precise; urgency=low
+
+  * Temporarily disable failing test after server-side changes
+  * Fix DXHTTPRequest error handling and add regression test
+
+ -- Kaveh Nafissi <knafissi@dnanexus.com>  Wed, 09 Dec 2015 23:26:55 +0000
+
+dx-toolkit (0.173.0) precise; urgency=low
+
+  * Fixes for dxpy concurrency and for data egress
+
+ -- Phil Sung <psung@dnanexus.com>  Wed, 02 Dec 2015 18:29:29 +0000
+
+dx-toolkit (0.172.0) precise; urgency=low
+
+  * Org administration commands
+
+ -- Phil Sung <psung@dnanexus.com>  Wed, 25 Nov 2015 18:55:19 +0000
+
+dx-toolkit (0.171.0) precise; urgency=low
+
+  * PTFM-16643 "dx build --app" takes a --region arg
+  * PTFM-15570 dxpy supplies "project" to file download API calls
+  * Code review fix for 26ffeb2
+  * Change setUp in test from 26ffeb2
+  * PTFM-16144 Find org members DX command
+  * I/O params gracefully handle unknown fields during deserialization
+  * PTFM-16656 Use flock to make dx-jobutil-add-output concurrency safe
+  * Add code review fix for 18c26a3
+
+ -- Kaveh Nafissi <knafissi@dnanexus.com>  Wed, 18 Nov 2015 19:35:34 +0000
+
+dx-toolkit (0.170.0) precise; urgency=low
+
+  * Force noninteractive frontend in apt-get
+
+ -- Phil Sung <psung@dnanexus.com>  Fri, 13 Nov 2015 01:24:32 +0000
+
 dx-toolkit (0.169.0) precise; urgency=low
 
   * Consistent help strings for all "dx find" commands
@@ -51,7 +135,7 @@ dx-toolkit (0.166.0) precise; urgency=low
   * PTFM-15334 Add --no-email tag to dx invite {user} {project}
   * dxpy.download_dxfile(): avoid memory leak in chunk iterator
   * dxpy.DXFile: fix request config logic error in read()
-  * dxpy.download_dxfile: restore positional args compatibility 
+  * dxpy.download_dxfile: restore positional args compatibility
 
  -- Kaveh Nafissi <knafissi@dnanexus.com>  Thu, 15 Oct 2015 00:01:02 +0000
 

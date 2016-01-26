@@ -24,12 +24,13 @@ signatures. They can be run by calling the :func:`DXApplet.run` method.
 
 """
 
-from __future__ import (print_function, unicode_literals)
+from __future__ import print_function, unicode_literals, division, absolute_import
 
 import dxpy
 from . import DXDataObject, DXJob
 from ..utils import merge
 from ..exceptions import DXError
+from ..compat import basestring
 
 class DXExecutable:
     '''Methods in :class:`!DXExecutable` are used by

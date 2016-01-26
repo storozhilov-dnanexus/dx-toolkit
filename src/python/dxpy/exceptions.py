@@ -18,10 +18,11 @@
 Exceptions for the :mod:`dxpy` package.
 '''
 
-from __future__ import (print_function, unicode_literals)
+from __future__ import print_function, unicode_literals, division, absolute_import
 
 import sys, json, traceback, errno, socket
 import requests
+from requests.exceptions import HTTPError
 
 import dxpy
 
@@ -29,7 +30,6 @@ EXPECTED_ERR_EXIT_STATUS = 3
 
 class DXError(Exception):
     '''Base class for exceptions in this package.'''
-    pass
 
 class DXAPIError(DXError):
     '''
@@ -61,52 +61,40 @@ class DXAPIError(DXError):
 
 class MalformedJSON(DXAPIError):
     ''' Raised when the input could not be parsed as JSON. '''
-    pass
 
 class InvalidAuthentication(DXAPIError):
     ''' Raised when the provided OAuth2 token is invalid. '''
-    pass
 
 class PermissionDenied(DXAPIError):
     ''' Raised when the supplied credentials have insufficient permissions to perform this action. '''
-    pass
 
 class SpendingLimitExceeded(DXAPIError):
     ''' Raised when the spending limit has been reached for the account that would be billed for this action. '''
-    pass
 
 class ResourceNotFound(DXAPIError):
     ''' Raised when a specified entity or resource could not be found. '''
-    pass
 
 class InvalidInput(DXAPIError):
     ''' Raised when the input is syntactically correct (JSON), but semantically incorrect (for example, a JSON array
     is provided where a hash was required; or a required parameter was missing, etc.). '''
-    pass
 
 class InvalidState(DXAPIError):
     ''' Raised when the operation is not allowed at this object state. '''
-    pass
 
 class InvalidType(DXAPIError):
     ''' Raised when an object specified in the request is of invalid type. '''
-    pass
 
 class RateLimitConditional(DXAPIError):
     ''' Raised when the rate of invalid requests is too high. '''
-    pass
 
 class InternalError(DXAPIError):
     ''' Raised when the server encountered an internal error. '''
-    pass
 
 class ServiceUnavailable(DXAPIError):
     ''' Raised when an API service was temporarily unavailable. '''
-    pass
 
 class DXFileError(DXError):
     '''Exception for :class:`dxpy.bindings.dxfile.DXFile`.'''
-    pass
 
 class DXPartLengthMismatchError(DXFileError):
     '''Exception raised by :class:`dxpy.bindings.dxfile.DXFile` on part length mismatch.'''
@@ -116,23 +104,18 @@ class DXChecksumMismatchError(DXFileError):
 
 class DXGTableError(DXError):
     '''Exception for :class:`dxpy.bindings.dxgtable.DXGTable`.'''
-    pass
 
 class DXSearchError(DXError):
     '''Exception for :mod:`dxpy.bindings.search` methods.'''
-    pass
 
 class DXAppletError(DXError):
     '''Exception for :class:`dxpy.bindings.dxapplet.DXApplet`.'''
-    pass
 
 class DXJobFailureError(DXError):
     '''Exception produced by :class:`dxpy.bindings.dxjob.DXJob` when a job fails.'''
-    pass
 
 class ProgramError(DXError):
     '''Deprecated. Use :class:`AppError` instead.'''
-    pass
 
 class AppError(ProgramError):
     '''
@@ -145,7 +128,6 @@ class AppError(ProgramError):
     *job_error.json* in the current working directory, allowing reporting of
     the error state through the DNAnexus API.
     '''
-    pass
 
 class AppInternalError(DXError):
     '''
@@ -158,17 +140,23 @@ class AppInternalError(DXError):
     the current working directory, allowing reporting of the error state
     through the DNAnexus API.
     '''
-    pass
 
 class DXCLIError(DXError):
     '''
     Exception class for generic errors in the command-line client
     '''
-    pass
 
-class ContentLengthError(requests.HTTPError):
-    '''Will be raised when actual content length received from server does not match the "Content-Length" header'''
-    pass
+class ContentLengthError(HTTPError):
+    '''
+    Raised when actual content length received from the server does not
+    match the "Content-Length" header
+    '''
+
+class BadJSONInReply(ValueError):
+    '''
+    Raised when the server returned invalid JSON in the response body. Possible reasons
+    for this are the network connection breaking, or overload on the server.
+    '''
 
 
 def format_exception(e):
@@ -213,7 +201,7 @@ network_exceptions = (requests.packages.urllib3.exceptions.ProtocolError,
                       requests.packages.urllib3.exceptions.ConnectTimeoutError,
                       requests.packages.urllib3.exceptions.ReadTimeoutError,
                       requests.packages.urllib3.connectionpool.HTTPException,
-                      requests.exceptions.HTTPError,
+                      HTTPError,
                       socket.error)
 
 default_expected_exceptions = network_exceptions + (DXAPIError,

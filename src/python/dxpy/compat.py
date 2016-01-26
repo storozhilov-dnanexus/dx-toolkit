@@ -14,7 +14,7 @@
 #   License for the specific language governing permissions and limitations
 #   under the License.
 
-from __future__ import (print_function, unicode_literals)
+from __future__ import print_function, unicode_literals, division, absolute_import
 
 import os, sys, io, locale
 from io import TextIOWrapper
@@ -32,6 +32,7 @@ _stdio_wrapped = False
 
 if USING_PYTHON2:
     from cStringIO import StringIO
+    from httplib import BadStatusLine
     BytesIO = StringIO
     builtin_str = str
     bytes = str
@@ -80,6 +81,7 @@ if USING_PYTHON2:
         import shlex
 else:
     from io import StringIO, BytesIO
+    from http.client import BadStatusLine
     import shlex
     builtin_str = str
     str = str

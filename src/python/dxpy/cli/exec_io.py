@@ -18,7 +18,7 @@
 Functions and classes used when launching platform executables from the CLI.
 '''
 
-from __future__ import (print_function, unicode_literals)
+from __future__ import print_function, unicode_literals, division, absolute_import
 
 # TODO: refactor all dx run helper functions here
 
@@ -32,7 +32,7 @@ from ..utils.describe import (get_find_executions_string, get_ls_l_desc, parse_t
 from ..utils.resolver import (get_first_pos_of_char, is_hashid, is_job_id, is_localjob_id, paginate_and_pick, pick,
                               resolve_existing_path, resolve_multiple_existing_paths, split_unescaped, is_analysis_id)
 from ..utils import OrderedDefaultdict
-from ..compat import input, str, shlex
+from ..compat import input, str, shlex, basestring
 
 ####################
 # -i Input Parsing #

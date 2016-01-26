@@ -17,7 +17,7 @@
 #   License for the specific language governing permissions and limitations
 #   under the License.
 
-from __future__ import print_function, unicode_literals
+from __future__ import print_function, unicode_literals, division, absolute_import
 
 import os, sys, datetime, getpass, collections, re, json, argparse, copy, hashlib, io, time, subprocess, glob, logging
 import shlex # respects quoted substrings when splitting
@@ -44,8 +44,8 @@ from ..cli.parsers import (no_color_arg, delim_arg, env_args, stdout_args, all_a
                            set_env_from_args, extra_args, process_extra_args, DXParserError, exec_input_args,
                            instance_type_arg, process_instance_type_arg)
 from ..cli.exec_io import (ExecutableInputs, format_choices_or_suggestions)
-from ..cli.org import (get_org_invite_args, add_membership, remove_membership,
-                       update_membership, find_orgs, org_find_projects)
+from ..cli.org import (get_org_invite_args, add_membership, remove_membership, update_membership, new_org, update_org,
+                       find_orgs, org_find_members, org_find_projects)
 from ..exceptions import (err_exit, DXError, DXCLIError, DXAPIError, network_exceptions, default_expected_exceptions,
                           format_exception)
 from ..utils import warn, group_array_by_field, normalize_timedelta, normalize_time_input
@@ -53,13 +53,13 @@ from ..utils import warn, group_array_by_field, normalize_timedelta, normalize_t
 from ..app_categories import APP_CATEGORIES
 from ..utils.printing import (CYAN, BLUE, YELLOW, GREEN, RED, WHITE, UNDERLINE, BOLD, ENDC, DNANEXUS_LOGO,
                               DNANEXUS_X, set_colors, set_delimiter, get_delimiter, DELIMITER, fill,
-                              tty_rows, tty_cols, pager, format_find_projects_results)
+                              tty_rows, tty_cols, pager, format_find_results)
 from ..utils.pretty_print import format_tree, format_table
 from ..utils.resolver import (pick, paginate_and_pick, is_hashid, is_data_obj_id, is_container_id, is_job_id,
                               is_analysis_id, get_last_pos_of_char, resolve_container_id_or_name, resolve_path,
                               resolve_existing_path, get_app_from_path, resolve_app, get_exec_handler,
-                              split_unescaped, ResolutionError, get_first_pos_of_char,
-                              resolve_to_objects_or_project)
+                              split_unescaped, ResolutionError, resolve_to_objects_or_project, is_project_explicit,
+                              object_exists_in_project, is_jbor_str)
 from ..utils.completer import (path_completer, DXPathCompleter, DXAppCompleter, LocalCompleter,
                                ListCompleter, MultiCompleter)
 from ..utils.describe import (print_data_obj_desc, print_desc, print_ls_desc, get_ls_l_desc, print_ls_l_desc,
@@ -160,16 +160,17 @@ if "LESS" in os.environ:
 else:
     os.environ["LESS"] = "-RS"
 
-# This completer is for the command-line in the shell.  It assumes the
-# first word is always a subcommand and that if the first word is a
+# This completer is for the command line in the shell (i.e., `dx sh`). It
+# assumes the first word is always a subcommand and that if the first word is a
 # subcommand with further subcommands, then the second word must be an
 # appropriate sub-subcommand.
 class DXCLICompleter():
-    subcommands = {'find': ['data ', 'projects ', 'apps ', 'jobs ', 'executions ', 'analyses ', 'org_projects '],
-                   'new': ['record ', 'project ', 'workflow '],
-                   'add': ['developers ', 'users ', 'stage '],
-                   'remove': ['developers ', 'users ', 'stage '],
-                   'update': ['stage ', 'workflow ']}
+    subcommands = {'find': ['data ', 'projects ', 'apps ', 'jobs ', 'executions ', 'analyses ', 'org_members ',
+                            'org_projects ', 'orgs '],
+                   'new': ['record ', 'project ', 'workflow ', 'org ', 'user '],
+                   'add': ['developers ', 'users ', 'stage ', 'member '],
+                   'remove': ['developers ', 'users ', 'stage ', 'member '],
+                   'update': ['stage ', 'workflow ', 'org ', 'member ']}
 
     silent_commands = set(['import'])
 
@@ -374,7 +375,7 @@ def login(args):
             if greeting.get('messages'):
                 print(BOLD("New messages from ") + DNANEXUS_LOGO())
                 for message in greeting['messages']:
-                    print(BOLD("Date:    ") + datetime.datetime.fromtimestamp(message['date']/1000).ctime())
+                    print(BOLD("Date:    ") + datetime.datetime.fromtimestamp(message['date']//1000).ctime())
                     print(BOLD("Subject: ") + fill(message['title'], subsequent_indent=' '*9))
                     body = message['body'].splitlines()
                     if len(body) > 0:
@@ -398,8 +399,10 @@ def login(args):
         msg = "You are now logged in. Your credentials are stored in {conf_dir} and will expire in {timeout}. {tip}"
         tip = "Use " + BOLD("dx login --timeout") + " to control the expiration date, or " + BOLD("dx logout") + \
               " to end this session."
+        timeout = datetime.timedelta(seconds=normalize_time_input(args.timeout, default_unit='s') // 1000)
         print(fill(msg.format(conf_dir=dxpy.config.get_user_conf_dir(),
-              timeout=datetime.timedelta(seconds=normalize_time_input(args.timeout, default_unit='s')/1000), tip=tip)))
+                              timeout=timeout,
+                              tip=tip)))
 
 def logout(args):
     if dxpy.AUTH_HELPER is not None:
@@ -1263,7 +1266,11 @@ def _get_user_new_args(args):
     if args.middle is not None:
         user_new_args["middle"] = args.middle
     if args.token_duration is not None:
-        user_new_args["tokenDuration"] = args.token_duration
+        token_duration_ms = normalize_timedelta(args.token_duration)
+        if token_duration_ms > 30 * 24 * 60 * 60 * 1000:
+            raise ValueError("--token-duration must be 30 days or less")
+        else:
+            user_new_args["tokenDuration"] = token_duration_ms
     if args.occupation is not None:
         user_new_args["occupation"] = args.occupation
     if args.set_bill_to is True:
@@ -1285,16 +1292,15 @@ def new_user(args):
                        prepend_srv=False,
                        max_retries=0)
 
+    user_id = "user-" + args.username.lower()
     if args.org is not None:
         # Invite new user to org.
-        dxpy.api.org_invite(args.org, get_org_invite_args(args))
+        dxpy.api.org_invite(args.org, get_org_invite_args(user_id, args))
 
     if args.brief:
-        print("user-" + args.username)
+        print(user_id)
     else:
-        print(fill("Created new user account (user-{u})".format(
-            u=args.username
-        )))
+        print(fill("Created new user account ({u})".format(u=user_id)))
 
 
 def new_project(args):
@@ -1660,6 +1666,7 @@ def unset_properties(args):
         except:
             err_exit()
 
+
 def make_download_url(args):
     project, _folderpath, entity_result = try_call(resolve_existing_path, args.path, expected='entity')
     if entity_result is None:
@@ -1671,12 +1678,13 @@ def make_download_url(args):
     if args.filename is None:
         args.filename = entity_result['describe']['name']
 
+    # TODO: how to do data egress billing for make_download_url?
     try:
         dxfile = dxpy.DXFile(entity_result['id'], project=project)
         url, _headers = dxfile.get_download_url(preauthenticated=True,
-                                                duration=normalize_timedelta(args.duration)/1000 if args.duration else 24*3600,
+                                                duration=normalize_timedelta(args.duration)//1000 if args.duration else 24*3600,
                                                 filename=args.filename,
-                                                project=project)
+                                                project=None)
         print(url)
     except:
         err_exit()
@@ -1747,9 +1755,10 @@ def get(args):
         fd.write(json.dumps(details, indent=4))
     elif entity_result['describe']['class'] == 'applet':
         from dxpy.utils.app_unbuilder import dump_applet
-        dump_applet(dxpy.DXApplet(entity_result['id'], project=project), output_path)
+        dump_applet(dxpy.DXApplet(entity_result['id'], project=project), output_path, args.omit_resources)
     if fd is not None and args.output != '-':
         fd.close()
+
 
 def cat(args):
     for path in args.path:
@@ -1761,10 +1770,25 @@ def cat(args):
         if entity_result['describe']['class'] != 'file':
             parser.exit(1, fill('Error: expected a file object') + '\n')
 
+        # If the user did not explicitly provide the project, don't pass any
+        # project parameter to the API call but continue with download resolution
+        path_has_explicit_proj = is_project_explicit(path) or is_jbor_str(path)
+        if not path_has_explicit_proj:
+            project = None
+        elif is_jbor_str(path):
+            project = entity_result['describe']['project']
+        # If the user explicitly provided the project and it doesn't contain
+        # the file, don't allow the download.
+        if path_has_explicit_proj and project is not None and \
+           not object_exists_in_project(entity_result['describe']['id'], project):
+            parser.exit(1, fill('Error: project does not contain specified file object') + '\n')
+
         try:
-            dxfile = dxpy.DXFile(entity_result['id'], project=project)
+            dxfile = dxpy.DXFile(entity_result['id'])
             while True:
-                chunk = dxfile.read(1024*1024)
+                # If we decided the project specification was not explicit, do
+                # not allow the workspace setting to bleed through
+                chunk = dxfile.read(1024*1024, project=project or dxpy.DXFile.NO_PROJECT_HINT)
                 if len(chunk) == 0:
                     break
                 sys.stdout.buffer.write(chunk)
@@ -2221,9 +2245,9 @@ def find_projects(args):
                                      public=(args.public if args.public else None),
                                      created_after=args.created_after,
                                      created_before=args.created_before)
-        format_find_projects_results(args, results)
     except:
         err_exit()
+    format_find_results(args, results)
 
 
 def find_apps(args):
@@ -2972,7 +2996,7 @@ def watch(args):
             args.format = u"{timestamp} " + args.format
 
         def msg_callback(message):
-            message['timestamp'] = str(datetime.datetime.fromtimestamp(message.get('timestamp', 0)/1000))
+            message['timestamp'] = str(datetime.datetime.fromtimestamp(message.get('timestamp', 0)//1000))
             message['level_color'] = level_colors.get(message.get('level', ''), '')
             message['job_name'] = log_client.seen_jobs[message['job']]['name'] if message['job'] in log_client.seen_jobs else message['job']
             print(args.format.format(**message))
@@ -3765,7 +3789,7 @@ register_subparser(parser_add_stage, subparsers_action=subparsers_add, categorie
 
 parser_add_member = subparsers_add.add_parser("member", help="Grant a user membership to an org", description="Grant a user membership to an org", prog="dx add member", parents=[stdout_args, env_args])
 parser_add_member.add_argument("org_id", help="ID of the org")
-parser_add_member.add_argument("username", help="Username")
+parser_add_member.add_argument("username_or_user_id", help="Username or ID of user")
 parser_add_member.add_argument("--level", required=True, choices=["ADMIN", "MEMBER"], help="Org membership level that will be granted to the specified user")
 parser_add_member.add_argument("--allow-billable-activities", default=False, action="store_true", help='Grant the specified user "allowBillableActivities" in the org')
 parser_add_member.add_argument("--no-app-access", default=True, action="store_false", dest="app_access", help='Disable "appAccess" for the specified user in the org')
@@ -3840,7 +3864,7 @@ register_subparser(parser_remove_stage, subparsers_action=subparsers_remove, cat
 
 parser_remove_member = subparsers_remove.add_parser("member", help="Revoke the org membership of a user", description="Revoke the org membership of a user", prog="dx remove member", parents=[stdout_args, env_args])
 parser_remove_member.add_argument("org_id", help="ID of the org")
-parser_remove_member.add_argument("username", help="Username")
+parser_remove_member.add_argument("username_or_user_id", help="Username or ID of user")
 parser_remove_member.add_argument("--keep-explicit-project-permissions", default=True, action="store_false", dest="revoke_project_permissions", help="Disable revocation of explicit project permissions of the specified user to projects billed to the org; implicit project permissions (i.e. those granted to the specified user via his membership in this org) will always be revoked")
 parser_remove_member.add_argument("--keep-explicit-app-permissions", default=True, action="store_false", dest="revoke_app_permissions", help="Disable revocation of explicit app developer and user permissions of the specified user to apps billed to the org; implicit app permissions (i.e. those granted to the specified user via his membership in this org) will always be revoked")
 parser_remove_member.add_argument("-y", "--yes", action="store_false", dest="confirm", help="Do not ask for confirmation")
@@ -3856,6 +3880,19 @@ subcommands.''',
 subparsers_update = parser_update.add_subparsers(parser_class=DXArgumentParser)
 subparsers_update.metavar = 'target'
 register_subparser(parser_update, categories=())
+
+parser_update_org = subparsers_update.add_parser('org',
+                                                 help='Update information about an org',
+                                                 description='Update information about an org',
+                                                 parents=[stdout_args, env_args],
+                                                 prog='dx update org')
+parser_update_org.add_argument('org_id', help='ID of the org')
+parser_update_org.add_argument('--name', help='New name of the org')
+parser_update_org.add_argument('--member-list-visibility', help='New org membership level that is required to be able to view the membership level and/or permissions of any other member in the specified org (corresponds to the memberListVisibility org policy)', choices=['ADMIN', 'MEMBER', 'PUBLIC'])
+parser_update_org.add_argument('--project-transfer-ability', help='New org membership level that is required to be able to change the billing account of a project that is billed to the specified org, to some other entity (corresponds to the restrictProjectTransfer org policy)', choices=['ADMIN', 'MEMBER'])
+parser_update_org.set_defaults(func=update_org)
+register_subparser(parser_update_org, subparsers_action=subparsers_update, categories=('other'))
+
 
 parser_update_workflow = subparsers_update.add_parser('workflow', help='Update the metadata for a workflow',
                                                       description='Update the metadata for an existing workflow',
@@ -3898,11 +3935,11 @@ register_subparser(parser_update_stage, subparsers_action=subparsers_update, cat
 
 parser_update_member = subparsers_update.add_parser("member", help="Update the membership of a user in an org", description="Update the membership of a user in an org", prog="dx update member", parents=[stdout_args, env_args])
 parser_update_member.add_argument("org_id", help="ID of the org")
-parser_update_member.add_argument("username", help="Username")
-parser_update_member.add_argument("--level", required=True, choices=["ADMIN", "MEMBER"], help="The new org membership level of the specified user")
-parser_update_member.add_argument("--allow-billable-activities", choices=["true", "false"], help='The new "allowBillableActivities" membership permission of the specified user in the org')
-parser_update_member.add_argument("--app-access", choices=["true", "false"], help='The new "appAccess" membership permission of the specified user in the org')
-parser_update_member.add_argument("--project-access", choices=["ADMINISTER", "CONTRIBUTE", "UPLOAD", "VIEW", "NONE"], help='The new default implicit maximum permission the specified user will receive to projects explicitly shared with the org')
+parser_update_member.add_argument("username_or_user_id", help="Username or ID of user")
+parser_update_member.add_argument("--level", choices=["ADMIN", "MEMBER"], help="The new org membership level of the specified user")
+parser_update_member.add_argument("--allow-billable-activities", choices=["true", "false"], help='The new "allowBillableActivities" membership permission of the specified user in the org; default false if demoting the specified user from ADMIN to MEMBER')
+parser_update_member.add_argument("--app-access", choices=["true", "false"], help='The new "appAccess" membership permission of the specified user in the org; default true if demoting the specified user from ADMIN to MEMBER')
+parser_update_member.add_argument("--project-access", choices=["ADMINISTER", "CONTRIBUTE", "UPLOAD", "VIEW", "NONE"], help='The new default implicit maximum permission the specified user will receive to projects explicitly shared with the org; default CONTRIBUTE if demoting the specified user from ADMIN to MEMBER')
 parser_update_member.set_defaults(func=update_membership)
 register_subparser(parser_update_member, subparsers_action=subparsers_update, categories="other")
 
@@ -4091,7 +4128,7 @@ parser_new_user_user_opts.add_argument("--email", required=True, help="Email add
 parser_new_user_user_opts.add_argument("--first", help="First name")
 parser_new_user_user_opts.add_argument("--middle", help="Middle name")
 parser_new_user_user_opts.add_argument("--last", help="Last name")
-parser_new_user_user_opts.add_argument("--token-duration", type=int, help="Time duration (ms) for which the newly generated auth token for the new user will be valid")
+parser_new_user_user_opts.add_argument("--token-duration", help='Time duration for which the newly generated auth token for the new user will be valid (default 30 days; max 30 days). An integer will be interpreted as seconds; you can append a suffix (s, m, h, d) to indicate different units (e.g. "--token-duration 10m" to indicate 10 minutes).')
 parser_new_user_user_opts.add_argument("--occupation", help="Occupation")
 parser_new_user_org_opts = parser_new_user.add_argument_group("Org options", "Optionally invite the new user to an org with the specified parameters")
 parser_new_user_org_opts.add_argument("--org", help="ID of the org")
@@ -4104,6 +4141,17 @@ parser_new_user_org_opts.add_argument("--no-email", default=False, action=DXNewU
 parser_new_user.set_defaults(func=new_user)
 register_subparser(parser_new_user, subparsers_action=subparsers_new,
                    categories="other")
+
+parser_new_org = subparsers_new.add_parser('org', help='Create new org',
+                                           description='Create a new org',
+                                           parents=[stdout_args, env_args],
+                                           prog='dx new org')
+parser_new_org.add_argument('name', help='Descriptive name of the org', nargs='?')
+parser_new_org.add_argument('--handle', required=True, help='Unique handle for the org. The specified handle will be converted to lowercase and appended to "org-" to form the org ID')
+parser_new_org.add_argument('--member-list-visibility', default="ADMIN", help='Org membership level required to be able to list the members of the org, or to view the membership level or permissions of any other member of the org; default ADMIN', choices=["ADMIN", "MEMBER", "PUBLIC"])
+parser_new_org.add_argument('--project-transfer-ability', default="ADMIN", help='Org membership level required to be able to change the billing account of an org-billed project to any other entity; default ADMIN', choices=["ADMIN", "MEMBER"])
+parser_new_org.set_defaults(func=new_org)
+register_subparser(parser_new_org, subparsers_action=subparsers_new, categories='other')
 
 parser_new_project = subparsers_new.add_parser('project', help='Create a new project',
                                                description='Create a new project',
@@ -4275,6 +4323,7 @@ parser_get = subparsers.add_parser('get', help='Download records, applets, and f
 parser_get.add_argument('path', help='Data object ID or name to access').completer = DXPathCompleter(classes=['file', 'record', 'applet'])
 parser_get.add_argument('-o', '--output', help='local file path where the data is to be saved ("-" indicates stdout output for objects of class file and record). If not supplied, the object\'s name on the platform will be used, along with any applicable extensions. For applets, if OUTPUT does not exist, an applet source directory will be created there; if OUTPUT is an existing directory, a new directory with the applet\'s name will be created inside it.')
 parser_get.add_argument('--no-ext', help='If -o is not provided, do not add an extension to the filename', action='store_true')
+parser_get.add_argument('--omit-resources', help='When downloading an applet, omit fetching the resources associated with the applet.', action='store_true')
 parser_get.add_argument('-f', '--overwrite', help='Overwrite the local file if necessary', action='store_true')
 parser_get.set_defaults(func=get)
 register_subparser(parser_get, categories='data')
@@ -4412,10 +4461,22 @@ parser_find_projects.add_argument('--created-before',
 parser_find_projects.set_defaults(func=find_projects)
 register_subparser(parser_find_projects, subparsers_action=subparsers_find, categories='data')
 
+parser_find_org_members = subparsers_find.add_parser(
+    'org_members',
+    help='List members in the specified org',
+    description=fill('Finds members in the specified org subject to the given search parameters'),
+    parents=[stdout_args, json_arg, delim_arg, env_args],
+    prog='dx find org_members'
+)
+parser_find_org_members.add_argument('org_id', help='Org ID')
+parser_find_org_members.add_argument('--level', choices=["ADMIN", "MEMBER"], help='Restrict the result set to contain only members at the specified membership level.')
+parser_find_org_members.set_defaults(func=org_find_members)
+register_subparser(parser_find_org_members, subparsers_action=subparsers_find, categories='other')
+
 parser_find_org_projects = subparsers_find.add_parser(
     'org_projects',
-    help='List projects billed to a particular org',
-    description=fill('Finds projects billed to the specified org, subject to the given search parameters. You must '
+    help='List projects billed to the specified org',
+    description=fill('Finds projects billed to the specified org subject to the given search parameters. You must '
                      'be an ADMIN of the specified org to use this command. It allows you to identify projects billed '
                      'to the org that have not been shared with you explicitly.'),
     parents=[stdout_args, json_arg, delim_arg, env_args, find_by_properties_and_tags_args],

@@ -123,19 +123,18 @@ environment variables:
 
 '''
 
-from __future__ import (print_function, unicode_literals)
+from __future__ import print_function, unicode_literals, division, absolute_import
 
 import os, sys, json, time, logging, platform, ssl, traceback
 import errno
 import requests
 import socket
 from collections import namedtuple
-
-from requests.exceptions import HTTPError
+from . import exceptions
 from requests.auth import AuthBase
 from requests.packages import urllib3
 from requests.packages.urllib3.packages.ssl_match_hostname import match_hostname
-from .compat import USING_PYTHON2, expanduser
+from .compat import USING_PYTHON2, expanduser, BadStatusLine
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -156,7 +155,6 @@ def configure_urllib3():
 
 configure_urllib3()
 
-from . import exceptions
 from .toolkit_version import version as TOOLKIT_VERSION
 __version__ = TOOLKIT_VERSION
 
@@ -179,35 +177,40 @@ DEFAULT_RETRY_AFTER_503_INTERVAL = 60
 _DEBUG = 0  # debug verbosity level
 _UPGRADE_NOTIFY = True
 
+
 USER_AGENT = "{name}/{version} ({platform})".format(name=__name__,
                                                     version=TOOLKIT_VERSION,
                                                     platform=platform.platform())
+_default_certs = requests.certs.where()
 _default_headers = requests.utils.default_headers()
 _default_headers['DNAnexus-API'] = API_VERSION
 _default_headers['User-Agent'] = USER_AGENT
 _default_timeout = urllib3.util.timeout.Timeout(connect=DEFAULT_TIMEOUT, read=DEFAULT_TIMEOUT)
-_pool_manager = urllib3.PoolManager(maxsize=32,
-                                    cert_reqs=ssl.CERT_REQUIRED,
-                                    ca_certs=requests.certs.where(),
-                                    headers=_default_headers,
-                                    timeout=_default_timeout)
+_pool_manager = None
 _RequestForAuth = namedtuple('_RequestForAuth', 'method url headers')
-_expected_exceptions = exceptions.network_exceptions + (exceptions.DXAPIError, )
+_expected_exceptions = exceptions.network_exceptions + \
+                       (exceptions.DXAPIError, BadStatusLine, exceptions.BadJSONInReply)
 
-def _get_pool_manager(request_kwargs):
-    if 'verify' in request_kwargs or 'DX_CA_CERT' in os.environ:
-        cert_reqs = ssl.CERT_REQUIRED
-        ca_certs = request_kwargs.get('verify', os.environ.get('DX_CA_CERT'))
-        if request_kwargs.get('verify') is False or os.environ.get('DX_CA_CERT') == 'NOVERIFY':
-            cert_reqs, ca_certs = ssl.CERT_NONE, None
-            urllib3.disable_warnings()
-        return urllib3.PoolManager(cert_reqs=cert_reqs,
-                                   ca_certs=ca_certs,
-                                   headers=_default_headers,
-                                   timeout=_default_timeout)
-    else:
+def _get_pool_manager(verify, cert_file, key_file):
+    global _pool_manager
+    default_pool_args = dict(maxsize=32,
+                             cert_reqs=ssl.CERT_REQUIRED,
+                             ca_certs=_default_certs,
+                             headers=_default_headers,
+                             timeout=_default_timeout)
+    if cert_file is None and verify is None and 'DX_CA_CERT' not in os.environ:
+        if _pool_manager is None:
+            _pool_manager = urllib3.PoolManager(**default_pool_args)
         return _pool_manager
-
+    else:
+        pool_args = dict(default_pool_args,
+                         cert_file=cert_file,
+                         key_file=key_file,
+                         ca_certs=verify or os.environ.get('DX_CA_CERT') or requests.certs.where())
+        if verify is False or os.environ.get('DX_CA_CERT') == 'NOVERIFY':
+            pool_args.update(cert_reqs=ssl.CERT_NONE, ca_certs=None)
+            urllib3.disable_warnings()
+        return urllib3.PoolManager(**pool_args)
 
 def _process_method_url_headers(method, url, headers):
     if callable(url):
@@ -370,6 +373,8 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
     if auth:
         auth(_RequestForAuth(method, url, headers))
 
+    pool_args = {arg: kwargs.pop(arg, None) for arg in ("verify", "cert_file", "key_file")}
+
     if jsonify_data:
         data = json.dumps(data)
         if 'Content-Type' not in headers and method == 'POST':
@@ -385,14 +390,16 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
 
     try_index = 0
     while True:
-        success, streaming_response_truncated, time_started = True, False, None
+        success, time_started = True, None
         response = None
         try:
             if _DEBUG > 0:
                 time_started = time.time()
             _method, _url, _headers = _process_method_url_headers(method, url, headers)
-            response = _get_pool_manager(kwargs).request(_method, _url, headers=_headers, body=data,
-                                                         timeout=timeout, retries=False, **kwargs)
+
+            # throws BadStatusLine if the server returns nothing
+            response = _get_pool_manager(**pool_args).request(_method, _url, headers=_headers, body=data,
+                                                              timeout=timeout, retries=False, **kwargs)
             req_id = response.headers.get("x-request-id")
 
             if _UPGRADE_NOTIFY and response.headers.get('x-upgrade-info', '').startswith('A recommended update is available') and not os.environ.has_key('_ARGCOMPLETE'):
@@ -409,14 +416,18 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
             if response.status // 100 != 2:
                 # response.headers key lookup is case-insensitive
                 if response.headers.get('content-type', '').startswith('application/json'):
-                    content = json.loads(response.data.decode('utf-8'))
+                    content = response.data.decode('utf-8')
+                    try:
+                        content = json.loads(content)
+                    except ValueError:
+                        # The JSON is not parsable, but we should be able to retry.
+                        raise exceptions.BadJSONInReply("Invalid JSON received from server", response.status)
                     try:
                         error_class = getattr(exceptions, content["error"]["type"], exceptions.DXAPIError)
-                    except (KeyError, AttributeError):
-                        error_class = exceptions.HTTPError(
-                            "Unable to extract error class from response")
+                    except (KeyError, AttributeError, TypeError):
+                        error_class = exceptions.HTTPError
                     raise error_class(content, response.status)
-                raise HTTPError("{} {} [RequestID={}]".format(response.status, response.reason, req_id))
+                raise exceptions.HTTPError("{} {} [RequestID={}]".format(response.status, response.reason, req_id))
 
             if want_full_response:
                 return response
@@ -437,35 +448,28 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
                     if response.headers.get('content-type', '').startswith('application/json'):
                         try:
                             content = json.loads(content)
-                            if _DEBUG > 0:
-                                t = int((time.time() - time_started) * 1000)
-                                req_id = response.headers.get('x-request-id')
-                            if _DEBUG >= 3:
-                                print(method, req_id, url, "<=", response.status, "(%dms)" % t,
-                                      "\n" + json.dumps(content, indent=2), file=sys.stderr)
-                            elif _DEBUG == 2:
-                                print(method, req_id, url, "<=", response.status, "(%dms)" % t, json.dumps(content),
-                                      file=sys.stderr)
-                            elif _DEBUG > 0:
-                                print(method, req_id, url, "<=", response.status, "(%dms)" % t, Repr().repr(content),
-                                      file=sys.stderr)
                         except ValueError:
-                            # If a streaming API call (no content-length
-                            # set) encounters an error it may just halt the
-                            # response because it has no other way to
-                            # indicate an error. Under these circumstances
-                            # the client sees unparseable JSON, and we
-                            # should be able to recover.
-                            streaming_response_truncated = 'content-length' not in response.headers
+                            # The JSON is not parsable, but we should be able to retry.
+                            raise exceptions.BadJSONInReply("Invalid JSON received from server", response.status)
+                        if _DEBUG > 0:
+                            t = int((time.time() - time_started) * 1000)
                             req_id = response.headers.get('x-request-id')
-                            raise HTTPError("Invalid JSON received from server. [RequestID=%s]" % req_id)
+                        if _DEBUG >= 3:
+                            print(method, req_id, url, "<=", response.status, "(%dms)" % t,
+                                  "\n" + json.dumps(content, indent=2), file=sys.stderr)
+                        elif _DEBUG == 2:
+                            print(method, req_id, url, "<=", response.status, "(%dms)" % t, json.dumps(content),
+                                  file=sys.stderr)
+                        elif _DEBUG > 0:
+                            print(method, req_id, url, "<=", response.status, "(%dms)" % t, Repr().repr(content),
+                                  file=sys.stderr)
                 return content
             raise AssertionError('Should never reach this line: expected a result to have been returned by now')
         except Exception as e:
             # Avoid reusing connections in the pool, since they may be
             # in an inconsistent state (observed as "ResponseNotReady"
             # errors).
-            _get_pool_manager(kwargs).clear()
+            _get_pool_manager(**pool_args).clear()
             success = False
             exception_msg = _extract_msg_from_last_exception()
             if isinstance(e, _expected_exceptions):
@@ -488,9 +492,12 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
                 # iteration of the loop, try_index is equal to the number of
                 # tries that have failed so far, minus one. Test whether we
                 # have exhausted all retries.
+                #
+                # BadStatusLine ---  server did not return anything
+                # BadJSONInReply --- server returned JSON that didn't parse properly
                 if try_index + 1 < total_allowed_tries:
-                    if response is None or isinstance(e, exceptions.ContentLengthError) or \
-                       streaming_response_truncated:
+                    if response is None or \
+                       isinstance(e, (exceptions.ContentLengthError, BadStatusLine, exceptions.BadJSONInReply)):
                         ok_to_retry = always_retry or (method == 'GET') or _is_retryable_exception(e)
                     else:
                         ok_to_retry = 500 <= response.status < 600

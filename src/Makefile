@@ -44,7 +44,8 @@ endif
 
 export DNANEXUS_HOME=$(CURDIR)/..
 export PATH := $(DNANEXUS_HOME)/build/bin:$(PATH)
-export DX_PY_ENV=$(DNANEXUS_HOME)/build/py27_env
+export DX_PY_ENV=$(DNANEXUS_HOME)/build/py_env
+export DNANEXUS_LIBDIR := $(DNANEXUS_HOME)/share/dnanexus/lib
 
 # Short-circuit sudo when running as root. In a chrooted environment we are
 # likely to be running as root already, and sudo may not be present on minimal
@@ -112,52 +113,24 @@ cpp: api_wrappers
 	cp -a cpp "$(DNANEXUS_HOME)/share/dnanexus/src"
 
 src_libs: api_wrappers
-	$(eval DNANEXUS_LIBDIR := "$(DNANEXUS_HOME)/share/dnanexus/lib")
 	mkdir -p "$(DNANEXUS_LIBDIR)"
 	cp -R -v bash "$(DNANEXUS_LIBDIR)"
 	mkdir -p "$(DNANEXUS_HOME)/lib/perl5"
 	cp -R -v perl/lib/* "$(DNANEXUS_HOME)/lib/perl5/"
 
-python_wheels: ../build/wheels
+PYTHON_LIBDIR := $(DNANEXUS_LIBDIR)/python2.7/site-packages
 
-../build/wheels: python/requirements*.txt
-	pip wheel -r python/requirements.txt -r python/requirements_test.txt -r python/requirements_setuptools.txt --wheel-dir ../build/wheels
-# xattr < 0.7 fails to install using Python 3; that's OK since it's only needed for dxfs, which doesn't work on Python 3 either.
-	-pip wheel -r python/requirements_dxfs.txt --wheel-dir ../build/wheels
-ifeq ($(UNAME), Darwin)
-	pip wheel -r python/requirements_readline.txt
-endif
+python: api_wrappers toolkit_version $(DNANEXUS_HOME)/bin/dx
 
-python_deps: $(DX_PY_ENV)/lib
-
-$(DX_PY_ENV)/lib: python/requirements*.txt
+$(DNANEXUS_HOME)/bin/dx: $(shell find python/{dxpy,scripts,requirements*,setup*} -not -name toolkit_version*)
 	python -c 'import sys; exit("dx-toolkit is not compatible with Python < 2.7" if sys.version_info < (2, 7) else 0)'
-	rm -rf "$(DX_PY_ENV)"
+	rm -rf "$(PYTHON_LIBDIR)" "$(DX_PY_ENV)"
 	virtualenv --python=python "$(DX_PY_ENV)"
-	virtualenv --relocatable "$(DX_PY_ENV)"
-	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --upgrade --find-links="file://$(DNANEXUS_HOME)/build/wheels" --install-option="--install-lib=$(DX_PY_ENV)/lib/python2.7/site-packages" -r python/requirements_setuptools.txt)
-	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --ignore-installed --use-wheel --find-links="file://$(DNANEXUS_HOME)/build/wheels" --install-option="--install-lib=$(DX_PY_ENV)/lib/python2.7/site-packages" -r python/requirements.txt -r python/requirements_dxfs.txt)
-ifeq ($(UNAME), Darwin)
-	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --ignore-installed --use-wheel --find-links="file://$(DNANEXUS_HOME)/build/wheels" --install-option="--install-lib=$(DX_PY_ENV)/lib/python2.7/site-packages" -r python/requirements_readline.txt)
-endif
-ifdef DNANEXUS_INSTALL_PYTHON_TEST_DEPS
-	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --ignore-installed --use-wheel --find-links="file://$(DNANEXUS_HOME)/build/wheels" --install-option="--install-lib=$(DX_PY_ENV)/lib/python2.7/site-packages" -r python/requirements_test.txt)
-endif
-
-# We are going to install libraries to lib/python2.7 and then move them
-# elsewhere (to share/dnanexus/lib/python2.7). Modify PYTHONPATH temporarily so
-# setup.py doesn't complain.
-python: api_wrappers toolkit_version python_deps
-	rm -rf "$(DNANEXUS_HOME)/share/dnanexus/lib/python2.7"
-	mkdir -p "$(DNANEXUS_HOME)/lib/python2.7/site-packages"
-	mkdir -p "$(DNANEXUS_HOME)/share/dnanexus/lib"
-	cp -a "$(DX_PY_ENV)/lib/python2.7/site-packages" "$(DNANEXUS_HOME)/lib/python2.7/"
-	cp -a "$(DX_PY_ENV)/bin/"*python-argcomplete* "$(DNANEXUS_HOME)/bin/"
-ifdef DNANEXUS_INSTALL_PYTHON_TEST_DEPS
-	-cp -af "$(DX_PY_ENV)"/bin/coverage* "$(DNANEXUS_HOME)/bin/"
-endif
-	(source ../environment; source "$(DX_PY_ENV)/bin/activate"; export PYTHONPATH="$(DNANEXUS_HOME)/lib/python2.7/site-packages:${PYTHONPATH}"; cd python; python ./setup.py build; python ./setup.py install --install-lib="$(DNANEXUS_HOME)/lib/python2.7/site-packages" --install-scripts="$(DNANEXUS_HOME)/bin"; mv $(DNANEXUS_HOME)/lib/python2.7 $(DNANEXUS_HOME)/share/dnanexus/lib)
-	rm -f ../bin/easy_install* ../bin/xattr
+	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --upgrade -r python/requirements_setuptools.txt)
+	(unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; cd python; pip install --ignore-installed --prefix="$(DNANEXUS_HOME)" .)
+	mkdir -p "$$(dirname '$(PYTHON_LIBDIR)')"
+	mv "$(DNANEXUS_HOME)"/lib/python?.?/site-packages "$(PYTHON_LIBDIR)" || mv "$(DNANEXUS_HOME)"/site-packages "$(PYTHON_LIBDIR)"
+	rm -f "$(DNANEXUS_HOME)/bin/xattr"
 
 # TODO: fix up perl and java targets
 
@@ -395,9 +368,15 @@ boost_build:
 
 curl: c-ares/stage/lib/libcares.la curl/stage/lib/libcurl.la
 
-CURL_PV=7.35.0
-CURL_SHA=35c2b1f8c56912ab7bebaa61cf4494c94a0ed0d1
+CURL_PV=7.45.0
+CURL_SHA=e44fc290844c1e3c9b7f6ef9926d4366d0600514
 ifeq ($(OS), Windows_NT)
+# To build libcurl on Windows, setting a minimum Windows version is required,
+# and one way to do that is to define it in the CPPFLAGS env var. To be safe,
+# only export CPPFLAGS for the libcurl target:
+ifndef CPPFLAGS
+curl/stage/lib/libcurl.la: export CPPFLAGS=-DWINVER=0x0501
+endif
 	CURL_WITH_SSL=--with-winssl
 	CURL_SHARED_LIBS=--enable-shared=yes
 else ifeq ($(UNAME), Darwin)
@@ -494,4 +473,4 @@ clean:
 	-rm -rf boost c-ares curl file openssl
 	-$(MAKE) -C jq clean
 
-.PHONY: all toolkit_version api_wrappers src_libs python_deps python perl java ruby dx-contigset-to-fasta ua test test_ruby test_python test_perl install base_install debian_install doc setup_doc_build_virtualenv doc_python doc_dxcpp doc_dxjson doc_java R doc_R doc_ruby boost boost_build install_sysdeps
+.PHONY: all toolkit_version api_wrappers src_libs python perl java ruby dx-contigset-to-fasta ua test test_ruby test_python test_perl install base_install debian_install doc setup_doc_build_virtualenv doc_python doc_dxcpp doc_dxjson doc_java R doc_R doc_ruby boost boost_build install_sysdeps

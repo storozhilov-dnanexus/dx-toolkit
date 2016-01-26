@@ -31,7 +31,7 @@ from dxpy.scripts import dx_build_app
 from dxpy_testutil import (DXTestCase, check_output, temporary_project, select_project, cd, override_environment,
                            generate_unique_username_email, without_project_context, without_auth)
 import dxpy_testutil as testutil
-from dxpy.exceptions import DXAPIError, DXSearchError, EXPECTED_ERR_EXIT_STATUS
+from dxpy.exceptions import DXAPIError, DXSearchError, EXPECTED_ERR_EXIT_STATUS, HTTPError
 from dxpy.compat import str, sys_encoding, open
 from dxpy.utils.resolver import ResolutionError, _check_resolution_needed as check_resolution
 
@@ -917,6 +917,18 @@ class TestDXClient(DXTestCase):
         env = override_environment(DX_JOB_ID="foobar")
         run("dx env", env=env)
 
+    @unittest.skipUnless(testutil.TEST_WITH_AUTHSERVER,
+                         'skipping tests that require a running authserver')
+    def test_dx_http_request_handles_auth_errors(self):
+        # The JSON content cannot be processed.
+        with self.assertRaises(HTTPError):
+            dxpy.DXHTTPRequest(dxpy.get_auth_server_name() + "/oauth2/token",
+                               {"grant_type": "authorization_code",
+                                "redirect_uri": "/",
+                                "client_id": "apiserver"},
+                               prepend_srv=False,
+                               max_retries=0)
+
 
 class TestDXNewRecord(DXTestCase):
     def test_new_record_basic(self):
@@ -1181,6 +1193,21 @@ class TestDXClientUploadDownload(DXTestCase):
             run("wget -P " + output_testdir + " " + download_url)
             run('cmp ' + os.path.join(output_testdir, "foo") + ' ' + fd.name)
 
+    def test_dx_make_download_url_project_affinity(self):
+        # Ensure that URLs created with make_download_url never have project
+        # affinity. In particular, ensures that download URLs created in a job
+        # (when the workspace is set to a container) continue to work after the
+        # job has terminated
+        with temporary_project("make_download_url test 2") as temp_project_2:
+            with temporary_project("make_download_url test 1", select=True) as temp_project_1:
+                fh = dxpy.upload_string("foo", project=temp_project_1.get_id(), wait_on_close=True)
+                # file now appears in both projects
+                temp_project_1.clone(temp_project_2.get_id(), objects=[fh.get_id()])
+                download_url = run("dx make_download_url " + fh.get_id()).strip()
+                run("wget -O /dev/null " + download_url)
+            # Even after project 1 is destroyed, the download URL should still work
+            run("wget -O /dev/null " + download_url)
+
     def test_dx_upload_mult_paths(self):
         testdir = tempfile.mkdtemp()
         os.mkdir(os.path.join(testdir, 'a'))
@@ -1377,9 +1404,71 @@ dxpy.run()
             run('_DX_DEBUG=3 dx upload binary')
 
 
-class TestDXClientDownloadProject(DXTestCase):
+class TestDXClientDownloadDataEgressBilling(DXTestCase):
     def gen_file(self, fname, data, proj_id):
         return dxpy.upload_string(data, name=fname, project=proj_id, wait_on_close=True)
+
+    def get_billed_project(self):
+        with open(self.temp_file_fd.name, "r") as fd:
+            return fd.read()
+
+    def setUp(self):
+        self.temp_file_fd = tempfile.NamedTemporaryFile()
+        # set output file to verify api call is called with correct project
+        os.environ['_DX_DUMP_BILLED_PROJECT'] = self.temp_file_fd.name
+
+    def tearDown(self):
+        del os.environ['_DX_DUMP_BILLED_PROJECT']
+        self.temp_file_fd.close()
+
+    @unittest.skipUnless(testutil.TEST_ENV,
+                         'skipping test that would clobber your local environment')
+    def test_dx_cat_project_context(self):
+        proj1_name = 'test_proj1'
+        proj2_name = 'test_proj2'
+
+        with temporary_project(proj1_name, select=True) as proj, \
+                temporary_project(proj2_name) as proj2, \
+                chdir(tempfile.mkdtemp()):
+            data1 = 'ABCD'
+            file1_name = "file1"
+            file1_id = self.gen_file(file1_name, data1, proj.get_id()).get_id()
+
+            data2 = '1234'
+            file2_name = "file2"
+            file2_id = self.gen_file(file2_name, data2, proj2.get_id()).get_id()
+
+            # Success: project from context contains file specified by ID
+            buf = run("dx download -o - {f}".format(f=file1_id))
+            self.assertEqual(buf, data1)
+            # Project context alone, when combined with file by ID, is
+            # not sufficient to indicate user's intent to use that
+            # project
+            self.assertEqual(self.get_billed_project(), "")
+
+            # Success: project from context contains file specified by dxlink
+            buf = run("dx download -o - '{{\"$dnanexus_link\": \"{f}\"}}'".format(f=file1_id))
+            self.assertEqual(buf, data1)
+            self.assertEqual(self.get_billed_project(), "")
+
+            # Success: project from context contains file specified by name
+            buf = run("dx download -o - {f}".format(f=file1_name))
+            self.assertEqual(buf, data1)
+            self.assertEqual(self.get_billed_project(), proj.get_id())
+
+            # Success: project specified by context does not contains file specified by ID
+            buf = run("dx download -o - {f}".format(f=file2_id))
+            self.assertEqual(buf, data2)
+            self.assertEqual(self.get_billed_project(), "")
+
+            # Success: project specified by context does not contains file specified by dxlink
+            buf = run("dx download -o - '{{\"$dnanexus_link\": \"{f}\"}}'".format(f=file2_id))
+            self.assertEqual(buf, data2)
+            self.assertEqual(self.get_billed_project(), "")
+
+            # Failure: project specified by context does not contains file specified by name
+            with self.assertSubprocessFailure(stderr_regexp="Unable to resolve", exit_code=3):
+                run("dx download -o - {f}".format(f=file2_name))
 
     @unittest.skipUnless(testutil.TEST_ENV,
                          'skipping test that would clobber your local environment')
@@ -1399,39 +1488,35 @@ class TestDXClientDownloadProject(DXTestCase):
             file2_id = self.gen_file(file2_name, data2, proj2.get_id()).get_id()
 
             # Success: project from context contains file specified by ID
-            buf = run("dx download -o - {f}".format(f=file1_id))
-            self.assertEqual(buf, data1)
-
-            # Success: project from context contains file specified by name
-            buf = run("dx download -o - {f}".format(f=file1_name))
-            self.assertEqual(buf, data1)
-
-            # Success: project specified by context does not contains file specified by ID
-            buf = run("dx download -o - {f}".format(f=file2_id))
-            self.assertEqual(buf, data2)
-
-            # Failure: project specified by context does not contains file specified by name
-            with self.assertSubprocessFailure(stderr_regexp="Unable to resolve", exit_code=3):
-                run("dx download -o - {f}".format(f=file2_name))
-
-            # Test api call parameters when downloading to local file instead of cat to std out
-
-            # Success: project from context contains file specified by ID
             run("dx download -f --no-progress {f}".format(f=file1_id))
+            # Project context alone, when combined with file by ID, is
+            # not sufficient to indicate user's intent to use that
+            # project
+            self.assertEqual(self.get_billed_project(), "")
+
+            # Success: project from context contains file specified by dxlink
+            run("dx download -f --no-progress '{{\"$dnanexus_link\": \"{f}\"}}'".format(f=file1_id))
+            self.assertEqual(self.get_billed_project(), "")
 
             # Success: project from context contains file specified by name
             run("dx download -f --no-progress {f}".format(f=file1_name))
+            self.assertEqual(self.get_billed_project(), proj.get_id())
 
             # Success: project specified by context does not contains file specified by ID
-            buf = run("dx download -f --no-progress {f}".format(f=file2_id))
+            run("dx download -f --no-progress {f}".format(f=file2_id))
+            self.assertEqual(self.get_billed_project(), "")
+
+            # Success: project specified by context does not contains file specified by dxlink
+            run("dx download -f --no-progress '{{\"$dnanexus_link\": \"{f}\"}}'".format(f=file2_id))
+            self.assertEqual(self.get_billed_project(), "")
 
             # Failure: project specified by context does not contains file specified by name
             with self.assertSubprocessFailure(stderr_regexp="Unable to resolve", exit_code=3):
                 run("dx download -f --no-progress {f}".format(f=file2_name))
 
     def test_dx_download_project_explicit(self):
-        proj1_name = 'test_proj1'
-        proj2_name = 'test_proj2'
+        proj1_name = 'test_proj1_' + str(time.time())
+        proj2_name = 'test_proj2_' + str(time.time())
 
         with temporary_project(proj1_name, select=True) as proj, \
                 temporary_project(proj2_name) as proj2, \
@@ -1449,32 +1534,34 @@ class TestDXClientDownloadProject(DXTestCase):
             # Success: project specified by ID contains file specified by ID
             buf = run("dx download -o - {p}:{f}".format(p=proj2.get_id(), f=file2_id))
             self.assertEqual(buf, data2)
+            self.assertEqual(self.get_billed_project(), proj2.get_id())
 
             # Success: project specified by ID contains file specified by name
             buf = run("dx download -o - {p}:{f}".format(p=proj.get_id(), f=file1_name))
             self.assertEqual(buf, data1)
+            self.assertEqual(self.get_billed_project(), proj.get_id())
 
             # Success: project specified by name contains file specified by ID
             buf = run("dx download -o - {p}:{f}".format(p=proj2_name, f=file2_id))
             self.assertEqual(buf, data2)
+            self.assertEqual(self.get_billed_project(), proj2.get_id())
 
             # Success: project specified by name contains file specified by name
             buf = run("dx download -o - {p}:{f}".format(p=proj1_name, f=file1_name))
             self.assertEqual(buf, data1)
+            self.assertEqual(self.get_billed_project(), proj.get_id())
 
-            # Project specified by ID does not contain file specified by ID
-            #
-            # TODO: this should fail
-            run("dx download -o - {p}:{f}".format(p=proj2.get_id(), f=file1_id))
+            # Failure: project specified by ID does not contain file specified by ID
+            with self.assertSubprocessFailure(stderr_regexp="Error: project does not", exit_code=1):
+                run("dx download -o - {p}:{f}".format(p=proj2.get_id(), f=file1_id))
 
             # Failure: project specified by ID does not contain file specified by name
             with self.assertSubprocessFailure(stderr_regexp="Unable to resolve", exit_code=3):
                 run("dx download -o - {p}:{f}".format(p=proj.get_id(), f=file2_name))
 
-            # Project specified by name does not contain file specified by ID
-            #
-            # TODO: this should fail
-            run("dx download -o - {p}:{f}".format(p=proj2_name, f=file1_id))
+            # Failure: project specified by name does not contain file specified by ID
+            with self.assertSubprocessFailure(stderr_regexp="Error: project does not", exit_code=1):
+                run("dx download -o - {p}:{f}".format(p=proj2_name, f=file1_id))
 
             # Failure: project specified by name does not contain file specified by name
             with self.assertSubprocessFailure(stderr_regexp="Unable to resolve", exit_code=3):
@@ -1484,29 +1571,31 @@ class TestDXClientDownloadProject(DXTestCase):
 
             # Success: project specified by ID contains file specified by ID
             run("dx download -f --no-progress {p}:{f}".format(p=proj2.get_id(), f=file2_id))
+            self.assertEqual(self.get_billed_project(), proj2.get_id())
 
             # Success: project specified by ID contains file specified by name
             run("dx download -f --no-progress {p}:{f}".format(p=proj.get_id(), f=file1_name))
+            self.assertEqual(self.get_billed_project(), proj.get_id())
 
             # Success: project specified by name contains file specified by ID
             run("dx download -f --no-progress {p}:{f}".format(p=proj2_name, f=file2_id))
+            self.assertEqual(self.get_billed_project(), proj2.get_id())
 
             # Success: project specified by name contains file specified by name
             run("dx download -f --no-progress {p}:{f}".format(p=proj1_name, f=file1_name))
+            self.assertEqual(self.get_billed_project(), proj.get_id())
 
-            # Project specified by ID does not contain file specified by ID
-            #
-            # TODO: this should fail
-            run("dx download -f --no-progress {p}:{f}".format(p=proj2.get_id(), f=file1_id))
+            # Failure: project specified by ID does not contain file specified by ID
+            with self.assertSubprocessFailure(stderr_regexp="Error: specified project does not", exit_code=1):
+                run("dx download -f --no-progress {p}:{f}".format(p=proj2.get_id(), f=file1_id))
 
             # Failure: project specified by ID does not contain file specified by name
             with self.assertSubprocessFailure(stderr_regexp="Unable to resolve", exit_code=3):
                 run("dx download -f --no-progress {p}:{f}".format(p=proj.get_id(), f=file2_name))
 
-            # Project specified by name does not contain file specified by ID
-            #
-            # TODO: this should fail
-            run("dx download -f --no-progress {p}:{f}".format(p=proj2_name, f=file1_id))
+            # Failure: project specified by name does not contain file specified by ID
+            with self.assertSubprocessFailure(stderr_regexp="Error: specified project does not", exit_code=1):
+                run("dx download -f --no-progress {p}:{f}".format(p=proj2_name, f=file1_id))
 
             # Failure: project specified by name does not contain file specified by name
             with self.assertSubprocessFailure(stderr_regexp="Unable to resolve", exit_code=3):
@@ -1529,6 +1618,7 @@ class TestDXClientDownloadProject(DXTestCase):
             # Success: project specified by ID contains file specified by ID
             buf = run("dx download -o - {pid}:{f}".format(pid=proj2.get_id(), f=file2_id))
             self.assertEqual(buf, data2)
+            self.assertEqual(self.get_billed_project(), proj2.get_id())
 
             # Failure: project specified by name contains file specified by ID
             with self.assertSubprocessFailure(stderr_regexp="ResolutionError: Found multiple projects", exit_code=3):
@@ -1538,10 +1628,53 @@ class TestDXClientDownloadProject(DXTestCase):
 
             # Success: project specified by ID contains file specified by ID
             run("dx download -f --no-progress {pid}:{f}".format(pid=proj.get_id(), f=file1_id))
+            self.assertEqual(self.get_billed_project(), proj.get_id())
 
             # Failure: project specified by name contains file specified by ID
             with self.assertSubprocessFailure(stderr_regexp="ResolutionError: Found multiple projects", exit_code=3):
                 run("dx download -f --no-progress {pname}:{f}".format(pname=proj_name, f=file2_id))
+
+    @unittest.skipUnless(testutil.TEST_ENV and testutil.TEST_RUN_JOBS,
+                         'skipping test that would clobber your local environment and run jobs')
+    def test_dx_download_jbors(self):
+        proj1_name = 'test_proj1'
+        proj2_name = 'test_proj2'
+
+        with temporary_project(proj1_name, select=True) as proj1, \
+                temporary_project(proj2_name) as proj2, \
+                chdir(tempfile.mkdtemp()):
+            dxfile = dxpy.upload_string("foo", project=proj1.get_id(), wait_on_close=True)
+            applet_id = dxpy.api.applet_new({
+                "project": proj1.get_id(),
+                "dxapi": "0.0.1",
+                "inputSpec": [{"name": "infile", "class": "file"}],
+                "outputSpec": [{"name": "outfile", "class": "file"}],
+                "runSpec": {"interpreter": "bash",
+                            "code": """
+dx-jobutil-add-output outfile `dx-jobutil-parse-link "$infile"`
+"""
+                            }})["id"]
+            applet = dxpy.DXApplet(applet_id)
+            dxjob1 = applet.run({"infile": {"$dnanexus_link": dxfile.get_id()}}, project=proj1.get_id())
+            dxjob2 = applet.run({"infile": {"$dnanexus_link": dxfile.get_id()}}, project=proj2.get_id())
+            dxjob1.wait_on_done()
+            dxjob2.wait_on_done()
+
+            # Test downloading from jobs running in the current project
+            # context, and outside of the current project context
+            run("dx download -f --no-progress {job1}:outfile".format(job1=dxjob1.get_id()))
+            self.assertEqual(self.get_billed_project(), proj1.get_id())
+            run("dx download --no-progress -o - {job1}:outfile".format(job1=dxjob1.get_id()))
+            self.assertEqual(self.get_billed_project(), proj1.get_id())
+            run("dx download -f --no-progress {job2}:outfile".format(job2=dxjob2.get_id()))
+            self.assertEqual(self.get_billed_project(), proj2.get_id())
+            run("dx download --no-progress -o - {job2}:outfile".format(job2=dxjob2.get_id()))
+            self.assertEqual(self.get_billed_project(), proj2.get_id())
+
+            # Test downloading without a project context set
+            with without_project_context():
+                run("dx download -f --no-progress {job1}:outfile".format(job1=dxjob1.get_id()))
+                self.assertEqual(self.get_billed_project(), proj1.get_id())
 
 
 class TestDXClientDescribe(DXTestCase):
@@ -3691,228 +3824,19 @@ class TestDXClientFind(DXTestCase):
         assert_cmd_gives_ids("dx find jobs "+options3, [job_id])
         assert_cmd_gives_ids("dx find analyses "+options3, [])
 
-    def test_dx_find_org_projects_invalid(self):
-        cmd = "dx find org_projects org-irrelevant {opts}"
-
-        # --ids must contain at least one id.
-        with self.assertSubprocessFailure(stderr_regexp='expected at least one argument', exit_code=2):
-            run(cmd.format(opts="--ids"))
-
-        # --tag must contain at least one tag.
-        with self.assertSubprocessFailure(stderr_regexp='expected one argument', exit_code=2):
-            run(cmd.format(opts="--tag"))
-
-        # --property must contain at least one property.
-        with self.assertSubprocessFailure(stderr_regexp='expected one argument', exit_code=2):
-            run(cmd.format(opts="--property"))
-
-        # Only one of --public-only and --private-only may be specified.
-        with self.assertSubprocessFailure(stderr_regexp='not allowed with argument', exit_code=2):
-            run(cmd.format(opts="--public-only --private-only"))
-
-
-    @unittest.skipUnless(testutil.TEST_ISOLATED_ENV, 'skipping test that requires presence of test org and project')
-    def test_dx_find_org_projects(self):
-        org_id = "org-piratelabs"
-        project_ppb = "project-0000000000000000000000pb"
-        with temporary_project() as project_1, temporary_project() as project_2:
-            project1_id = project_1.get_id()
-            project2_id = project_2.get_id()  # project not billed to org
-            org_projects = [project_ppb, project1_id]
-
-            dxpy.api.project_update(project1_id, {"billTo": org_id})
-            self.assertEqual(dxpy.api.project_describe(project1_id)['billTo'], org_id)
-
-            # Basic test to check consistency of client output to directly invoking API
-            output = run("dx find org_projects {o} --brief".format(o=org_id)).strip().split("\n")
-            dx_api_output = dxpy.api.org_find_projects(org_id)
-            self.assertEqual(output, [result['id'] for result in dx_api_output['results']])
-            self.assertItemsEqual(output, org_projects)
-
-            # With --ids flag
-            output = run("dx find org_projects {o} --ids {p}".format(o=org_id, p=project2_id)).strip().split("\n")
-            self.assertItemsEqual(output, [''])
-
-            output = run("dx find org_projects {o} --ids {p} --brief".format(o=org_id,
-                         p=project1_id)).strip().split("\n")
-            self.assertItemsEqual(output, [project1_id])
-
-            output = run("dx find org_projects {o} --ids {p1} {p2} --brief".format(o=org_id, p1=project1_id,
-                         p2=project2_id)).strip().split("\n")
-            self.assertItemsEqual(output, [project1_id])
-
-            # With --tag
-            dxpy.api.project_add_tags(project1_id, {'tags': ['tag-1', 'tag-2']})
-            dxpy.api.project_add_tags(project2_id, {'tags': ['tag-1', 'tag-2']})
-            output = run("dx find org_projects {o} --tag {t1} --brief".format(o=org_id,
-                         t1='tag-1')).strip().split("\n")
-            self.assertEqual(output, [project1_id])
-
-            # With multiple --tag
-            output = run("dx find org_projects {o} --tag {t1} --tag {t2} --brief".format(o=org_id, t1='tag-1',
-                         t2='tag-2')).strip().split("\n")
-            self.assertEqual(output, [project1_id])
-
-            output = run("dx find org_projects {o} --tag {t1} --tag {t2} --brief".format(o=org_id, t1='tag-1',
-                         t2='tag-3')).strip().split("\n")
-            self.assertEqual(output, [""])
-
-            # With --property
-            dxpy.api.project_set_properties(project1_id, {'properties': {'property-1': 'value1', 'property-2':
-                                                          'value2'}})
-            dxpy.api.project_set_properties(project2_id, {'properties': {'property-1': 'value1', 'property-2':
-                                                          'value2'}})
-            output = run("dx find org_projects {o} --property {p1} --brief".format(o=org_id,
-                         p1='property-1')).strip().split("\n")
-            self.assertItemsEqual(output, [project1_id])
-
-            # With multiple --property
-            output = run("dx find org_projects {o} --property {p1} --property {p2} --brief".format(o=org_id,
-                         p1='property-1', p2='property-2')).strip().split("\n")
-            self.assertItemsEqual(output, [project1_id])
-
-            output = run("dx find org_projects {o} --property {p1} --property {p2} --brief".format(o=org_id,
-                         p1='property-1', p2='property-3')).strip().split("\n")
-            self.assertItemsEqual(output, [""])
-
-    @unittest.skipUnless(testutil.TEST_ISOLATED_ENV,
-                         'skipping test that requires presence of test org')
-    def test_dx_find_org_projects_public(self):
-        org_id = "org-piratelabs"
-
-        # Public project in `org_id`.
-        project_ppb_id = "project-0000000000000000000000pb"
-
-        with temporary_project() as p1, temporary_project() as p2:
-            # Private project in `org_id`.
-            private_project_id = p1.get_id()
-            dxpy.api.project_update(private_project_id, {"billTo": org_id})
-
-            # Assert that `p2` exists.
-            self.assertEqual(dxpy.api.project_describe(p2.get_id(), {})["level"], "ADMINISTER")
-
-            cmd = "dx find org_projects {o} {opts} --brief"
-
-            output = run(cmd.format(o=org_id, opts="")).strip().split("\n")
-            self.assertItemsEqual(output, [private_project_id, project_ppb_id])
-
-            output = run(cmd.format(o=org_id, opts="--public-only")).strip().split("\n")
-            self.assertItemsEqual(output, [project_ppb_id])
-
-            output = run(cmd.format(o=org_id, opts="--private-only")).strip().split("\n")
-            self.assertItemsEqual(output, [private_project_id])
-
-    @unittest.skipUnless(testutil.TEST_ISOLATED_ENV, 'skipping test that requires presence of test org')
-    def test_dx_find_org_projects_created(self):
-        org_id = "org-piratelabs"
-        project_ppb = "project-0000000000000000000000pb"
-        with temporary_project() as unique_project:
-            project_id = unique_project.get_id()
-            org_projects = [project_ppb, project_id]
-            dxpy.api.project_update(project_id, {"billTo": org_id})
-
-            created = dxpy.api.project_describe(project_id)['created']
-
-            # Test integer time stamp
-            self.assertItemsEqual(run("dx find org_projects {o} --created-before={cb} --brief".format(o=org_id,
-                                  cb=str(created + 1000))).strip().split("\n"), org_projects)
-
-            self.assertItemsEqual(run("dx find org_projects {o} --created-after={ca} --brief".format(o=org_id,
-                                  ca=str(created - 1000))).strip().split("\n"), [project_id])
-
-            self.assertItemsEqual(run("dx find org_projects {o} --created-after={ca} --created-before={cb} --brief".format(o=org_id,
-                                  ca=str(created - 1000), cb=str(created + 1000))).strip().split("\n"), [project_id])
-
-            self.assertItemsEqual(run("dx find org_projects {o} --created-before={cb} --brief".format(o=org_id,
-                                  cb=str(created - 1000))).strip().split("\n"), [project_ppb])
-
-            # Test integer with suffix
-            self.assertItemsEqual(run("dx find org_projects {o} --created-before={cb} --brief".format(o=org_id,
-                                  cb="-1d")).strip().split("\n"), [project_ppb])
-
-            self.assertItemsEqual(run("dx find org_projects {o} --created-after={ca} --brief".format(o=org_id,
-                                  ca="-1d")).strip().split("\n"), [project_id])
-
-            # Test date
-            self.assertItemsEqual(run("dx find org_projects {o} --created-before={cb} --brief".format(o=org_id,
-                                  cb="2015-10-28")).strip().split("\n"), [project_ppb])
-
-            self.assertItemsEqual(run("dx find org_projects {o} --created-after={ca} --brief".format(o=org_id,
-                                  ca="2015-10-28")).strip().split("\n"), [project_id])
-
-    @unittest.skipUnless(testutil.TEST_ISOLATED_ENV, 'skipping test that requires presence of test org')
-    def test_dx_find_org_projects_format(self):
-        org_id = "org-piratelabs"
-        cmd = "dx find org_projects {org} {opts}"
-
-        # Assert that only project ids are returned, line-separated
-        output = run(cmd.format(org=org_id, opts="--brief")).strip().split("\n")
-        pattern = "^project-[a-zA-Z0-9]{24}$"
-        for result in output:
-            self.assertRegexpMatches(result, pattern)
-
-        # Assert that return format is like: "<project_id><project_name><level>"
-        levels = "(?:ADMINISTER|CONTRIBUTE|UPLOAD|VIEW|NONE)"
-        output = run(cmd.format(org=org_id, opts="")).strip().split("\n")
-        pattern = "^project-[a-zA-Z0-9]{24} : .* \(" + levels + "\)$"
-        for result in output:
-            self.assertRegexpMatches(result, pattern)
-
-        # Test --json output
-        project_ppb = "project-0000000000000000000000pb"
-        output = json.loads(run("dx find org_projects {o} --json".format(o=org_id)))
-        expected = [{"id": project_ppb,
-                     "level": "ADMINISTER",
-                     "public": True,
-                     "describe": dxpy.api.project_describe(project_ppb)}]
-        self.assertEqual(output, expected)
-
     @unittest.skipUnless(testutil.TEST_ISOLATED_ENV,
                          'skipping test that requires presence of test org')
     def test_find_orgs(self):
-
-        def assert_find_orgs_results(results, assert_admin=False,
-                                     with_billable_activities=None, limit=16):
-            """
-            :param limit: The maximum number of items in *results* that will be
-            inspected for correctness. This is used to reduce the run-time of
-            this test at the cost of weakening its assertion, because there can
-            be an unbounded number of items in *results*.
-            :type limit: int.
-            """
-
-            if assert_admin and with_billable_activities is False:
-                # All ADMINs must have `allowBillableActivities`.
-                self.assertEquals(results, [])
-                return
-
-            for result in results[:limit]:
-                # Will throw an error if requesting user is not a member.
-                member_access_res = dxpy.api.org_get_member_access(result["id"])
-
-                if assert_admin:
-                    self.assertEquals(member_access_res["level"], "ADMIN")
-
-                if with_billable_activities is False:
-                    self.assertEquals(member_access_res["level"], "MEMBER")
-                    self.assertFalse(member_access_res["allowBillableActivities"])
-                elif with_billable_activities:
-                    self.assertTrue(
-                        member_access_res["level"] == "ADMIN" or
-                        (member_access_res["level"] == "MEMBER" and
-                         member_access_res["allowBillableActivities"]))
-
         org_with_billable_activities = "org-members_with_billing_rights"
-        self.assertTrue(dxpy.api.org_get_member_access(org_with_billable_activities)["allowBillableActivities"])
+        self.assertTrue(dxpy.api.org_describe(org_with_billable_activities)["allowBillableActivities"])
         org_without_billable_activities = "org-members_without_billing_rights"
-        self.assertFalse(dxpy.api.org_get_member_access(org_without_billable_activities)["allowBillableActivities"])
+        self.assertFalse(dxpy.api.org_describe(org_without_billable_activities)["allowBillableActivities"])
         org_with_admin = "org-piratelabs"
-        self.assertTrue(dxpy.api.org_get_member_access(org_with_admin)["level"] == "ADMIN")
+        self.assertTrue(dxpy.api.org_describe(org_with_admin)["level"] == "ADMIN")
 
         cmd = "dx find orgs --level {l} {o} --json"
 
         results = json.loads(run(cmd.format(l="MEMBER", o="")).strip())
-        assert_find_orgs_results(results)
         self.assertItemsEqual([org_with_billable_activities,
                                org_without_billable_activities,
                                org_with_admin],
@@ -3920,31 +3844,26 @@ class TestDXClientFind(DXTestCase):
 
         results = json.loads(run(cmd.format(
             l="MEMBER", o="--with-billable-activities")).strip())
-        assert_find_orgs_results(results, with_billable_activities=True)
         self.assertItemsEqual([org_with_billable_activities,
                                org_with_admin],
                               [result["id"] for result in results])
 
         results = json.loads(run(cmd.format(
             l="MEMBER", o="--without-billable-activities")).strip())
-        assert_find_orgs_results(results, with_billable_activities=False)
         self.assertItemsEqual([org_without_billable_activities],
                               [result["id"] for result in results])
 
         results = json.loads(run(cmd.format(l="ADMIN", o="")).strip())
-        assert_find_orgs_results(results, assert_admin=True)
         self.assertItemsEqual([org_with_admin],
                               [result["id"] for result in results])
 
         results = json.loads(run(cmd.format(
             l="ADMIN", o="--with-billable-activities")).strip())
-        assert_find_orgs_results(results, assert_admin=True, with_billable_activities=True)
         self.assertItemsEqual([org_with_admin],
                               [result["id"] for result in results])
 
         results = json.loads(run(cmd.format(
             l="ADMIN", o="--without-billable-activities")).strip())
-        assert_find_orgs_results(results, assert_admin=True, with_billable_activities=False)
         self.assertItemsEqual([], [result["id"] for result in results])
 
     @unittest.skipUnless(testutil.TEST_ISOLATED_ENV,
@@ -3970,6 +3889,514 @@ class TestDXClientFind(DXTestCase):
             self.assertTrue(pattern.match(result))
 
 
+@unittest.skipUnless(testutil.TEST_ISOLATED_ENV, 'skipping test that requires presence of test org, project, and user')
+class TestDXClientFindInOrg(DXTestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.org_id = "org-piratelabs"
+        cls.user_alice = "user-000000000000000000000000"  # ADMIN
+        cls.user_bob = "user-000000000000000000000001"
+        dxpy.api.org_invite(cls.org_id, {"invitee": cls.user_bob})  # Invite user_bob as MEMEBER of org-piratelabs
+        cls.project_ppb = "project-0000000000000000000000pb"  # public project in "org-piratelabs"
+
+    @classmethod
+    def tearDownClass(cls):
+        dxpy.api.org_remove_member(cls.org_id, {"user": cls.user_bob})
+
+    def test_dx_find_org_members_negative(self):
+        # No org id
+        with self.assertSubprocessFailure(stderr_regexp='dx find org_members: error: too few arguments', exit_code=2):
+            run("dx find org_members")
+
+        # No input to --level
+        with self.assertSubprocessFailure(stderr_regexp='error: argument --level: expected one argument', exit_code=2):
+            run("dx find org_members org-piratelabs --level")
+
+    def test_dx_find_org_members(self):
+        org_members = [self.user_alice, self.user_bob]  # sorted ascending by user ID
+        org_members.sort()
+
+        # Basic test to check consistency of client output to directly invoking API
+        output = run("dx find org_members org-piratelabs --brief").strip().split("\n")
+        dx_api_output = dxpy.api.org_find_members(self.org_id)
+        self.assertEqual(output, [member['id'] for member in dx_api_output['results']])
+        self.assertEqual(output, org_members)
+
+        # With --level flag
+        output = run("dx find org_members org-piratelabs --level {l} --brief".format(l="ADMIN")).strip().split("\n")
+        self.assertItemsEqual(output, [self.user_alice])
+
+        output = run("dx find org_members org-piratelabs --level {l} --brief".format(l="MEMBER")).strip().split("\n")
+        self.assertItemsEqual(output, [self.user_bob])
+
+    def test_dx_find_org_members_format(self):
+        cmd = "dx find org_members org-piratelabs {opts}"
+
+        # Assert that only member ids are returned, line-separated
+        output = run(cmd.format(opts="--brief")).strip().split("\n")
+        pattern = "^user-[a-zA-Z0-9]*$"
+        for result in output:
+            self.assertRegexpMatches(result, pattern)
+
+        # Assert that return format is like: "<user_id> : <user_name> (<level>)"
+        levels = "(?:ADMIN|MEMBER)"
+        output = run(cmd.format(opts="")).strip().split("\n")
+        pattern = "^user-[a-zA-Z0-9]* : .* \(" + levels + "\)$"
+        for result in output:
+            self.assertRegexpMatches(result, pattern)
+
+        # Test --json output
+        # TODO: Deprecate 'createProjectsAndApps'
+        output = json.loads(run(cmd.format(opts='--json')))
+        query_user_describe = {"fields": {"class": True, "first": True, "last": True, "middle": True, "handle": True}}
+        expected = [{"appAccess": True,
+                     "projectAccess": "ADMINISTER",
+                     "level": "ADMIN",
+                     "createProjectsAndApps": True,
+                     "allowBillableActivities": True,
+                     "id": self.user_alice,
+                     "describe": dxpy.api.user_describe(self.user_alice, query_user_describe)},
+                    {"appAccess": True,
+                     "projectAccess": "CONTRIBUTE",
+                     "createProjectsAndApps": False,
+                     "allowBillableActivities": False,
+                     "level": "MEMBER",
+                     "id": self.user_bob,
+                     "describe": dxpy.api.user_describe(self.user_bob, query_user_describe)}]
+        self.assertEqual(output, expected)
+
+    def test_dx_find_org_projects_invalid(self):
+        cmd = "dx find org_projects org-irrelevant {opts}"
+
+        # --ids must contain at least one id.
+        with self.assertSubprocessFailure(stderr_regexp='expected at least one argument', exit_code=2):
+            run(cmd.format(opts="--ids"))
+
+        # --tag must contain at least one tag.
+        with self.assertSubprocessFailure(stderr_regexp='expected one argument', exit_code=2):
+            run(cmd.format(opts="--tag"))
+
+        # --property must contain at least one property.
+        with self.assertSubprocessFailure(stderr_regexp='expected one argument', exit_code=2):
+            run(cmd.format(opts="--property"))
+
+        # Only one of --public-only and --private-only may be specified.
+        with self.assertSubprocessFailure(stderr_regexp='not allowed with argument', exit_code=2):
+            run(cmd.format(opts="--public-only --private-only"))
+
+    def test_dx_find_org_projects(self):
+        with temporary_project() as project_1, temporary_project() as project_2:
+            project1_id = project_1.get_id()
+            project2_id = project_2.get_id()  # project not billed to org
+            org_projects = [self.project_ppb, project1_id]
+
+            dxpy.api.project_update(project1_id, {"billTo": self.org_id})
+            self.assertEqual(dxpy.api.project_describe(project1_id)['billTo'], self.org_id)
+
+            # Basic test to check consistency of client output to directly invoking API
+            output = run("dx find org_projects org-piratelabs --brief").strip().split("\n")
+            dx_api_output = dxpy.api.org_find_projects(self.org_id)
+            self.assertEqual(output, [result['id'] for result in dx_api_output['results']])
+            self.assertItemsEqual(output, org_projects)
+
+            # With --ids flag
+            output = run("dx find org_projects org-piratelabs --ids {p}".format(p=project2_id)).strip().split("\n")
+            self.assertItemsEqual(output, [''])
+
+            output = run("dx find org_projects org-piratelabs --ids {p} --brief".format(
+                         p=project1_id)).strip().split("\n")
+            self.assertItemsEqual(output, [project1_id])
+
+            output = run("dx find org_projects org-piratelabs --ids {p1} {p2} --brief".format(p1=project1_id,
+                         p2=project2_id)).strip().split("\n")
+            self.assertItemsEqual(output, [project1_id])
+
+            # With --tag
+            dxpy.api.project_add_tags(project1_id, {'tags': ['tag-1', 'tag-2']})
+            dxpy.api.project_add_tags(project2_id, {'tags': ['tag-1', 'tag-2']})
+            output = run("dx find org_projects org-piratelabs --tag {t1} --brief".format(
+                         t1='tag-1')).strip().split("\n")
+            self.assertEqual(output, [project1_id])
+
+            # With multiple --tag
+            output = run("dx find org_projects org-piratelabs --tag {t1} --tag {t2} --brief".format(t1='tag-1',
+                         t2='tag-2')).strip().split("\n")
+            self.assertEqual(output, [project1_id])
+
+            output = run("dx find org_projects org-piratelabs --tag {t1} --tag {t2} --brief".format(t1='tag-1',
+                         t2='tag-3')).strip().split("\n")
+            self.assertEqual(output, [""])
+
+            # With --property
+            dxpy.api.project_set_properties(project1_id, {'properties': {'property-1': 'value1', 'property-2':
+                                                          'value2'}})
+            dxpy.api.project_set_properties(project2_id, {'properties': {'property-1': 'value1', 'property-2':
+                                                          'value2'}})
+            output = run("dx find org_projects org-piratelabs --property {p1} --brief".format(
+                         p1='property-1')).strip().split("\n")
+            self.assertItemsEqual(output, [project1_id])
+
+            # With multiple --property
+            output = run("dx find org_projects org-piratelabs --property {p1} --property {p2} --brief".format(
+                         p1='property-1', p2='property-2')).strip().split("\n")
+            self.assertItemsEqual(output, [project1_id])
+
+            output = run("dx find org_projects org-piratelabs --property {p1} --property {p2} --brief".format(
+                         p1='property-1', p2='property-3')).strip().split("\n")
+            self.assertItemsEqual(output, [""])
+
+    def test_dx_find_org_projects_public(self):
+        with temporary_project() as p1, temporary_project() as p2:
+            # Private project in `org_id`.
+            private_project_id = p1.get_id()
+            dxpy.api.project_update(private_project_id, {"billTo": self.org_id})
+
+            # Assert that `p2` exists.
+            self.assertEqual(dxpy.api.project_describe(p2.get_id(), {})["level"], "ADMINISTER")
+
+            cmd = "dx find org_projects org-piratelabs {opts} --brief"
+
+            output = run(cmd.format(opts="")).strip().split("\n")
+            self.assertItemsEqual(output, [private_project_id, self.project_ppb])
+
+            output = run(cmd.format(opts="--public-only")).strip().split("\n")
+            self.assertItemsEqual(output, [self.project_ppb])
+
+            output = run(cmd.format(opts="--private-only")).strip().split("\n")
+            self.assertItemsEqual(output, [private_project_id])
+
+    def test_dx_find_org_projects_created(self):
+        with temporary_project() as unique_project:
+            project_id = unique_project.get_id()
+            org_projects = [self.project_ppb, project_id]
+            dxpy.api.project_update(project_id, {"billTo": self.org_id})
+
+            created = dxpy.api.project_describe(project_id)['created']
+
+            # Test integer time stamp
+            self.assertItemsEqual(run("dx find org_projects org-piratelabs --created-before={cb} --brief".format(
+                                  cb=str(created + 1000))).strip().split("\n"), org_projects)
+
+            self.assertItemsEqual(run("dx find org_projects org-piratelabs --created-after={ca} --brief".format(
+                                  ca=str(created - 1000))).strip().split("\n"), [project_id])
+
+            self.assertItemsEqual(run("dx find org_projects org-piratelabs --created-after={ca} --created-before={cb} --brief".format(
+                                  ca=str(created - 1000), cb=str(created + 1000))).strip().split("\n"), [project_id])
+
+            self.assertItemsEqual(run("dx find org_projects org-piratelabs --created-before={cb} --brief".format(
+                                  cb=str(created - 1000))).strip().split("\n"), [self.project_ppb])
+
+            # Test integer with suffix
+            self.assertItemsEqual(run("dx find org_projects org-piratelabs --created-before={cb} --brief".format(
+                                  cb="-1d")).strip().split("\n"), [self.project_ppb])
+
+            self.assertItemsEqual(run("dx find org_projects org-piratelabs --created-after={ca} --brief".format(
+                                  ca="-1d")).strip().split("\n"), [project_id])
+
+            # Test date
+            self.assertItemsEqual(run("dx find org_projects org-piratelabs --created-before={cb} --brief".format(
+                                  cb="2015-10-28")).strip().split("\n"), [self.project_ppb])
+
+            self.assertItemsEqual(run("dx find org_projects org-piratelabs --created-after={ca} --brief".format(
+                                  ca="2015-10-28")).strip().split("\n"), [project_id])
+
+    def test_dx_find_org_projects_format(self):
+        cmd = "dx find org_projects org-piratelabs {opts}"
+
+        # Assert that only project ids are returned, line-separated
+        output = run(cmd.format(opts="--brief")).strip().split("\n")
+        pattern = "^project-[a-zA-Z0-9]{24}$"
+        for result in output:
+            self.assertRegexpMatches(result, pattern)
+
+        # Assert that return format is like: "<project_id><project_name><level>"
+        levels = "(?:ADMINISTER|CONTRIBUTE|UPLOAD|VIEW|NONE)"
+        output = run(cmd.format(opts="")).strip().split("\n")
+        pattern = "^project-[a-zA-Z0-9]{24} : .* \(" + levels + "\)$"
+        for result in output:
+            self.assertRegexpMatches(result, pattern)
+
+        # Test --json output
+        output = json.loads(run(cmd.format(opts="--json")))
+        expected = [{"id": self.project_ppb,
+                     "level": "ADMINISTER",
+                     "public": True,
+                     "describe": dxpy.api.project_describe(self.project_ppb)}]
+        self.assertEqual(output, expected)
+
+
+@unittest.skipUnless(testutil.TEST_ISOLATED_ENV, 'skipping tests that require org creation')
+class TestDXClientOrg(DXTestCase):
+
+    @classmethod
+    def get_unique_org_handle(cls):
+        return "dx_test_new_org_{t}_{r}".format(t=int(time.time()), r=random.randint(0, 32768))
+
+    def setUp(self):
+        org_handle = TestDXClientOrg.get_unique_org_handle()
+        org_new_input = {"name": org_handle, "handle": org_handle}
+        self.org_id = dxpy.api.org_new(org_new_input)["id"]
+        super(TestDXClientOrg, self).setUp()
+
+    def test_create_new_org_negative(self):
+        # No handle supplied
+        with self.assertRaisesRegexp(subprocess.CalledProcessError, "error: argument --handle is required"):
+            run('dx new org')
+
+        with self.assertRaisesRegexp(subprocess.CalledProcessError, "error: argument --handle is required"):
+            run('dx new org "Test Org"')
+
+        with self.assertRaisesRegexp(subprocess.CalledProcessError, "error: argument --handle is required"):
+            run('dx new org --member-list-visibility MEMBER')
+
+        with self.assertRaisesRegexp(subprocess.CalledProcessError, "error: argument --handle is required"):
+            run('dx new org --project-transfer-ability MEMBER')
+
+        with self.assertRaisesRegexp(subprocess.CalledProcessError, "error: argument --handle is required"):
+            run('dx new org --member-list-visibility ADMIN --project-transfer-ability MEMBER')
+
+        with self.assertRaisesRegexp(subprocess.CalledProcessError,
+                                     "error: argument --member-list-visibility: invalid choice"):
+            run('dx new org --member-list-visibility NONE')
+
+    def test_create_new_org(self):
+        # Basic test with only required input args; optional input arg defaults propagated properly.
+        org_handle = TestDXClientOrg.get_unique_org_handle()
+        org_id = run('dx new org "Test New Org" --handle {h} --brief'.format(h=org_handle)).strip()
+        res = dxpy.api.org_describe(org_id)
+        self.assertEqual(res['handle'], org_handle)
+        self.assertEqual(res['name'], "Test New Org")
+        self.assertEqual(res['policies']['memberListVisibility'], "ADMIN")
+        self.assertEqual(res['policies']['restrictProjectTransfer'], "ADMIN")
+
+        # Test --member-list-visibility flag
+        org_handle = TestDXClientOrg.get_unique_org_handle()
+        policy_mlv = "MEMBER"
+        org_id = run('dx new org "Test New Org" --handle {h} --member-list-visibility {mlv} --brief'
+                     .format(h=org_handle, mlv=policy_mlv)).strip()
+        res = dxpy.api.org_describe(org_id)
+        self.assertEqual(res['handle'], org_handle)
+        self.assertEqual(res['name'], "Test New Org")
+        self.assertEqual(res['policies']['memberListVisibility'], policy_mlv)
+        self.assertEqual(res['policies']['restrictProjectTransfer'], "ADMIN")
+
+        org_handle = TestDXClientOrg.get_unique_org_handle()
+        policy_mlv = "PUBLIC"
+        org_id = run('dx new org "Test New Org" --handle {h} --member-list-visibility {mlv} --brief'
+                     .format(h=org_handle, mlv=policy_mlv)).strip()
+        res = dxpy.api.org_describe(org_id)
+        self.assertEqual(res['handle'], org_handle)
+        self.assertEqual(res['name'], "Test New Org")
+        self.assertEqual(res['policies']['memberListVisibility'], policy_mlv)
+        self.assertEqual(res['policies']['restrictProjectTransfer'], "ADMIN")
+
+        # Test --project-transfer-ability flag
+        org_handle = TestDXClientOrg.get_unique_org_handle()
+        policy_pta = "MEMBER"
+        org_id = run('dx new org "Test New Org" --handle {h} --project-transfer-ability {pta} --brief'
+                     .format(h=org_handle, pta=policy_pta)).strip()
+        res = dxpy.api.org_describe(org_id)
+        self.assertEqual(res['handle'], org_handle)
+        self.assertEqual(res['name'], "Test New Org")
+        self.assertEqual(res['policies']['memberListVisibility'], "ADMIN")
+        self.assertEqual(res['policies']['restrictProjectTransfer'], policy_pta)
+
+        # Assert non-brief output format
+        org_handle = TestDXClientOrg.get_unique_org_handle()
+        output = run('dx new org "Test New Org" --handle {h}'.format(h=org_handle)).strip()
+        self.assertEquals(output, 'Created new org called "Test New Org" (org-' + org_handle + ')')
+
+    def test_create_new_org_prompt(self):
+        # Prompt with only handle
+        org_handle = TestDXClientOrg.get_unique_org_handle()
+        dx_new_org = pexpect.spawn('dx new org --handle {h}'.format(h=org_handle), logfile=sys.stderr)
+        dx_new_org.expect('Enter descriptive name')
+        dx_new_org.sendline("Test New Org Prompt")
+        dx_new_org.expect('Created new org')
+        org_id = "org-" + org_handle
+        res = dxpy.api.org_describe(org_id)
+        self.assertEqual(res['handle'], org_handle)
+        self.assertEqual(res['name'], "Test New Org Prompt")
+        self.assertEqual(res['policies']["memberListVisibility"], "ADMIN")
+        self.assertEqual(res['policies']["restrictProjectTransfer"], "ADMIN")
+
+        # Prompt with "--member-list-visibility" & "--handle"
+        org_handle = TestDXClientOrg.get_unique_org_handle()
+        dx_new_org = pexpect.spawn('dx new org --handle {h} --member-list-visibility {mlv}'.format(h=org_handle,
+                                   mlv="PUBLIC"), logfile=sys.stderr)
+        dx_new_org.expect('Enter descriptive name')
+        dx_new_org.sendline("Test New Org Prompt")
+        dx_new_org.expect('Created new org')
+        org_id = "org-" + org_handle
+        res = dxpy.api.org_describe(org_id)
+        self.assertEqual(res['handle'], org_handle)
+        self.assertEqual(res['name'], "Test New Org Prompt")
+        self.assertEqual(res['policies']["memberListVisibility"], "PUBLIC")
+        self.assertEqual(res['policies']["restrictProjectTransfer"], "ADMIN")
+
+        org_handle = TestDXClientOrg.get_unique_org_handle()
+        dx_new_org = pexpect.spawn('dx new org --handle {h} --member-list-visibility {mlv}'.format(h=org_handle,
+                                   mlv="MEMBER"), logfile=sys.stderr)
+        dx_new_org.expect('Enter descriptive name')
+        dx_new_org.sendline("Test New Org Prompt")
+        dx_new_org.expect('Created new org')
+        org_id = "org-" + org_handle
+        res = dxpy.api.org_describe(org_id)
+        self.assertEqual(res['handle'], org_handle)
+        self.assertEqual(res['name'], "Test New Org Prompt")
+        self.assertEqual(res['policies']["memberListVisibility"], "MEMBER")
+        self.assertEqual(res['policies']["restrictProjectTransfer"], "ADMIN")
+
+        org_handle = TestDXClientOrg.get_unique_org_handle()
+        dx_new_org = pexpect.spawn('dx new org --handle {h} --member-list-visibility {mlv}'.format(h=org_handle,
+                                   mlv="ADMIN"), logfile=sys.stderr)
+        dx_new_org.expect('Enter descriptive name')
+        dx_new_org.sendline("Test New Org Prompt")
+        dx_new_org.expect('Created new org')
+        org_id = "org-" + org_handle
+        res = dxpy.api.org_describe(org_id)
+        self.assertEqual(res['handle'], org_handle)
+        self.assertEqual(res['name'], "Test New Org Prompt")
+        self.assertEqual(res['policies']["memberListVisibility"], "ADMIN")
+        self.assertEqual(res['policies']["restrictProjectTransfer"], "ADMIN")
+
+        # Prompt with "--project-transfer-ability" & "handle"
+        org_handle = TestDXClientOrg.get_unique_org_handle()
+        dx_new_org = pexpect.spawn('dx new org --handle {h} --project-transfer-ability {pta}'.format(h=org_handle,
+                                   pta="MEMBER"), logfile=sys.stderr)
+        dx_new_org.expect('Enter descriptive name')
+        dx_new_org.sendline("Test New Org Prompt")
+        dx_new_org.expect('Created new org')
+        org_id = "org-" + org_handle
+        res = dxpy.api.org_describe(org_id)
+        self.assertEqual(res['handle'], org_handle)
+        self.assertEqual(res['name'], "Test New Org Prompt")
+        self.assertEqual(res['policies']["memberListVisibility"], "ADMIN")
+        self.assertEqual(res['policies']["restrictProjectTransfer"], "MEMBER")
+
+        org_handle = TestDXClientOrg.get_unique_org_handle()
+        dx_new_org = pexpect.spawn('dx new org --handle {h} --project-transfer-ability {pta}'.format(h=org_handle,
+                                   pta="ADMIN"), logfile=sys.stderr)
+        dx_new_org.expect('Enter descriptive name')
+        dx_new_org.sendline("Test New Org Prompt")
+        dx_new_org.expect('Created new org')
+        org_id = "org-" + org_handle
+        res = dxpy.api.org_describe(org_id)
+        self.assertEqual(res['handle'], org_handle)
+        self.assertEqual(res['name'], "Test New Org Prompt")
+        self.assertEqual(res['policies']["memberListVisibility"], "ADMIN")
+        self.assertEqual(res['policies']["restrictProjectTransfer"], "ADMIN")
+
+        # Prompt with "--member-list-visibility", "--project-transfer-ability", & "--handle"
+        org_handle = TestDXClientOrg.get_unique_org_handle()
+        dx_new_org = pexpect.spawn('dx new org --handle {h} --member-list-visibility {p} --project-transfer-ability {p}'.format(
+                                   h=org_handle, p="MEMBER"), logfile=sys.stderr)
+        dx_new_org.expect('Enter descriptive name')
+        dx_new_org.sendline("Test New Org Prompt")
+        dx_new_org.expect('Created new org')
+        org_id = "org-" + org_handle
+        res = dxpy.api.org_describe(org_id)
+        self.assertEqual(res['handle'], org_handle)
+        self.assertEqual(res['name'], "Test New Org Prompt")
+        self.assertEqual(res['policies']["memberListVisibility"], "MEMBER")
+        self.assertEqual(res['policies']["restrictProjectTransfer"], "MEMBER")
+
+    def test_org_update_negative(self):
+        # Org id is required.
+        invalid_cmds = ["dx update org",
+                        "dx update org --name foo --member-list-visibility ADMIN --project-transfer-ability ADMIN"]
+        for invalid_cmd in invalid_cmds:
+            with self.assertSubprocessFailure(stderr_regexp="too few arguments", exit_code=2):
+                run(invalid_cmd)
+
+        # --project-transfer-ability may not be PUBLIC.
+        with self.assertSubprocessFailure(stderr_regexp="--project-transfer-ability.*invalid", exit_code=2):
+            run("dx update org {o} --project-transfer-ability PUBLIC".format(o=self.org_id))
+
+    def test_org_update(self):
+        def get_name_and_policies(org_id=None):
+            if org_id is None:
+                org_id = self.org_id
+            org_desc = dxpy.api.org_describe(org_id)
+            return (org_desc["name"], org_desc["policies"])
+
+        # ---Regression tests---
+
+        # Do not need to actually update the org at all.
+        cur_org_name, cur_org_policies = get_name_and_policies()
+        res = run('dx update org {o} --brief'.format(o=self.org_id)).strip()
+        self.assertEqual(res, self.org_id)
+        new_org_name, new_org_policies = get_name_and_policies(res)
+        self.assertEqual(new_org_name, cur_org_name)
+        self.assertEqual(new_org_policies, cur_org_policies)
+
+        # --name.
+        cur_org_name, cur_org_policies = new_org_name, new_org_policies
+        proposed_org_name = "foo"
+        self.assertNotEqual(proposed_org_name, cur_org_name)
+        res = run('dx update org {o} --name "{n}" --brief'.format(o=self.org_id, n=proposed_org_name)).strip()
+        self.assertEqual(res, self.org_id)
+        new_org_name, new_org_policies = get_name_and_policies(res)
+        self.assertEqual(new_org_name, proposed_org_name)
+        self.assertEqual(new_org_policies, cur_org_policies)
+
+        # --member-list-visibility.
+        cur_org_name, cur_org_policies = new_org_name, new_org_policies
+        proposed_mlv = "MEMBER"
+        self.assertNotEqual(proposed_mlv, cur_org_policies["memberListVisibility"])
+        exp_org_policies = dict(cur_org_policies, memberListVisibility=proposed_mlv)
+        res = run('dx update org {o} --member-list-visibility {p} --brief'.format(o=self.org_id,
+                                                                                  p=proposed_mlv)).strip()
+        self.assertEqual(res, self.org_id)
+        new_org_name, new_org_policies = get_name_and_policies(res)
+        self.assertEqual(new_org_name, cur_org_name)
+        self.assertEqual(new_org_policies, exp_org_policies)
+
+        cur_org_name, cur_org_policies = new_org_name, new_org_policies
+        proposed_mlv = "PUBLIC"
+        self.assertNotEqual(proposed_mlv, cur_org_policies["memberListVisibility"])
+        exp_org_policies = dict(cur_org_policies, memberListVisibility=proposed_mlv)
+        res = run('dx update org {o} --member-list-visibility {p} --brief'.format(o=self.org_id,
+                                                                                  p=proposed_mlv)).strip()
+        self.assertEqual(res, self.org_id)
+        new_org_name, new_org_policies = get_name_and_policies(res)
+        self.assertEqual(new_org_name, cur_org_name)
+        self.assertEqual(new_org_policies, exp_org_policies)
+
+        # --project-transfer-ability.
+        cur_org_name, cur_org_policies = new_org_name, new_org_policies
+        proposed_pta = "ADMIN"
+        self.assertNotEqual(proposed_pta, cur_org_policies["restrictProjectTransfer"])
+        exp_org_policies = dict(cur_org_policies, restrictProjectTransfer=proposed_pta)
+        res = run('dx update org {o} --project-transfer-ability {p} --brief'.format(o=self.org_id,
+                                                                                    p=proposed_pta)).strip()
+        self.assertEqual(res, self.org_id)
+        new_org_name, new_org_policies = get_name_and_policies(res)
+        self.assertEqual(new_org_name, cur_org_name)
+        self.assertEqual(new_org_policies, exp_org_policies)
+
+        # All args.
+        cur_org_name, cur_org_policies = new_org_name, new_org_policies
+        proposed_org_name = "bar"
+        proposed_mlv = "ADMIN"
+        proposed_pta = "MEMBER"
+        exp_org_policies = dict(cur_org_policies, memberListVisibility=proposed_mlv,
+                                restrictProjectTransfer=proposed_pta)
+        res = run('dx update org {o} --name {n} --member-list-visibility {mlv} --project-transfer-ability {pta} --brief'.format(
+            o=self.org_id, n=proposed_org_name, mlv=proposed_mlv, pta=proposed_pta)).strip()
+        self.assertEqual(res, self.org_id)
+        new_org_name, new_org_policies = get_name_and_policies(res)
+        self.assertEqual(new_org_name, proposed_org_name)
+        self.assertEqual(new_org_policies, exp_org_policies)
+
+    def test_org_update_format(self):
+        res = run('dx update org {o}'.format(o=self.org_id)).strip()
+        self.assertRegexpMatches(res, "^Updated.*{o}$".format(o=self.org_id))
+
+        res = run('dx update org {o} --brief'.format(o=self.org_id)).strip()
+        self.assertEqual(res, self.org_id)
+
+
 class TestDXClientNewProject(DXTestCase):
     def test_dx_new_project_with_region(self):
         project_id = run("dx new project --brief --region aws:us-east-1 ProjectInUSEast").strip()
@@ -3988,7 +4415,7 @@ class TestDXClientNewProject(DXTestCase):
         project_name = "test_dx_create_project"
 
         # Check that requesting user has allowBillableActivities permission in org
-        member_access = dxpy.api.org_get_member_access(org_id, {'user': dxpy.whoami()})
+        member_access = dxpy.api.org_describe(org_id)
         self.assertTrue(member_access['level'] == 'ADMIN' or member_access['allowBillableActivities'])
 
         # Check that billTo of requesting user is the requesting user
@@ -4129,7 +4556,7 @@ class TestDXClientNewUser(DXTestCase):
         self._assert_user_desc(user_id, {"last": last})
 
         # Basic with all options we can verify.
-        # TODO: Test --token-duration and --occupation.
+        # TODO: Test --occupation.
         username, email = generate_unique_username_email()
         user_id = run("{cmd} --username {u} --email {e} --first {f} --middle {m} --last {l} --brief".format(
                       cmd=cmd, u=username, e=email, f=first, m=middle,
@@ -4153,12 +4580,32 @@ class TestDXClientNewUser(DXTestCase):
         exp = {
             "level": "MEMBER",
             "allowBillableActivities": False,
+            "createProjectsAndApps": False,
             "appAccess": True,
             "projectAccess": "CONTRIBUTE",
-            "user": user_id
+            "id": user_id
         }
-        res = dxpy.api.org_get_member_access(self.org_id, {"user": user_id})
-        self.assertDictContainsSubset(exp, res)
+        res = dxpy.api.org_find_members(self.org_id, {"id": [user_id]})["results"][0]
+        self.assertEqual(res, exp)
+
+        # Grant default org membership level and permission flags; `username`
+        # has uppercase chars.
+        username, email = generate_unique_username_email()
+        username = username.upper()
+        user_id = run("{cmd} --username {u} --email {e} --first {f} --org {o} --brief".format(
+                      cmd=cmd, u=username, e=email, f=first,
+                      o=self.org_id)).strip()
+        self._assert_user_desc(user_id, {"first": first})
+        exp = {
+            "level": "MEMBER",
+            "allowBillableActivities": False,
+            "createProjectsAndApps": False,
+            "appAccess": True,
+            "projectAccess": "CONTRIBUTE",
+            "id": user_id
+        }
+        res = dxpy.api.org_find_members(self.org_id, {"id": [user_id]})["results"][0]
+        self.assertEqual(res, exp)
 
         # Grant custom org membership level and permission flags.
         username, email = generate_unique_username_email()
@@ -4169,12 +4616,13 @@ class TestDXClientNewUser(DXTestCase):
         exp = {
             "level": "MEMBER",
             "allowBillableActivities": True,
+            "createProjectsAndApps": True,
             "appAccess": False,
             "projectAccess": "VIEW",
-            "user": user_id
+            "id": user_id
         }
-        res = dxpy.api.org_get_member_access(self.org_id, {"user": user_id})
-        self.assertDictContainsSubset(exp, res)
+        res = dxpy.api.org_find_members(self.org_id, {"id": [user_id]})["results"][0]
+        self.assertEqual(res, exp)
 
         # Grant ADMIN org membership level; ignore all other org permission
         # options.
@@ -4185,10 +4633,14 @@ class TestDXClientNewUser(DXTestCase):
         self._assert_user_desc(user_id, {"first": first})
         exp = {
             "level": "ADMIN",
-            "user": user_id
+            "allowBillableActivities": True,
+            "createProjectsAndApps": True,
+            "appAccess": True,
+            "projectAccess": "ADMINISTER",
+            "id": user_id
         }
-        res = dxpy.api.org_get_member_access(self.org_id, {"user": user_id})
-        self.assertEqual(exp, res)
+        res = dxpy.api.org_find_members(self.org_id, {"id": [user_id]})["results"][0]
+        self.assertEqual(res, exp)
 
     def test_create_user_account_and_set_bill_to(self):
         first = "Asset"
@@ -4204,12 +4656,13 @@ class TestDXClientNewUser(DXTestCase):
         exp = {
             "level": "MEMBER",
             "allowBillableActivities": True,
+            "createProjectsAndApps": True,
             "appAccess": True,
             "projectAccess": "VIEW",
-            "user": user_id
+            "id": user_id
         }
-        res = dxpy.api.org_get_member_access(self.org_id, {"user": user_id})
-        self.assertDictContainsSubset(exp, res)
+        res = dxpy.api.org_find_members(self.org_id, {"id": [user_id]})["results"][0]
+        self.assertEqual(res, exp)
 
         # Grant ADMIN org membership level.
         username, email = generate_unique_username_email()
@@ -4219,28 +4672,60 @@ class TestDXClientNewUser(DXTestCase):
         self._assert_user_desc(user_id, {"first": first})
         exp = {
             "level": "ADMIN",
-            "user": user_id
+            "allowBillableActivities": True,
+            "createProjectsAndApps": True,
+            "appAccess": True,
+            "projectAccess": "ADMINISTER",
+            "id": user_id
         }
-        res = dxpy.api.org_get_member_access(self.org_id, {"user": user_id})
-        self.assertEqual(exp, res)
+        res = dxpy.api.org_find_members(self.org_id, {"id": [user_id]})["results"][0]
+        self.assertEqual(res, exp)
+
+    def test_create_user_account_and_set_token_duration_negative(self):
+        first = "Asset"
+        username, email = "token_duration_neg", "token_duration_neg@example.com"
+        cmd = "dx new user --username {u} --email {e} --first {f} --token-duration {td}"
+
+        invalid_token_durations = [
+            "8md",  # "md" is an invalid unit
+            "8.5",  # float is an invalid input
+            "8.5d",  # float with unit is an invalid input
+            "31d"  # longer than 30 days
+        ]
+
+        # test invalid inputs for token duration
+        for invalid_token_duration in invalid_token_durations:
+            with self.assertRaisesRegexp(subprocess.CalledProcessError, "ValueError"):
+                run(cmd.format(u=username.lower(), e=email, f=first, td=invalid_token_duration))
+
+    def test_create_user_account_and_set_token_duration(self):
+        first = "Asset"
+        cmd = "dx new user --username {u} --email {e} --first {f} --token-duration={td} --brief"
+
+        token_durations = ["10000", "10d", "-10000", "-10d"]
+
+        for token_duration in token_durations:
+            username, email = generate_unique_username_email()
+            user_id = run(cmd.format(u=username, e=email, f=first, td=token_duration)).strip()
+            self.assertEqual(user_id, "user-" + username.lower())
 
 
 @unittest.skipUnless(testutil.TEST_ISOLATED_ENV,
                      'skipping tests that require presence of test user and org')
 class TestDXClientMembership(DXTestCase):
 
-    def _add_user(self, user_id):
+    def _add_user(self, user_id, level="ADMIN"):
         dxpy.api.org_invite(self.org_id,
-                            {"invitee": user_id, "level": "ADMIN"})
+                            {"invitee": user_id, "level": level})
 
     def _remove_user(self, user_id):
         dxpy.api.org_remove_member(self.org_id, {"user": user_id})
 
-        with self.assertRaises(DXAPIError):
-            self._org_get_member_access(user_id)
+        with self.assertRaises(IndexError):
+            self._org_find_members(user_id)
 
-    def _org_get_member_access(self, user_id):
-        return dxpy.api.org_get_member_access(self.org_id, {"user": user_id})
+    def _org_find_members(self, user_id):
+        return dxpy.api.org_find_members(self.org_id, {"id": [user_id]})["results"][0]
 
     def setUp(self):
         # Bob.
@@ -4260,37 +4745,53 @@ class TestDXClientMembership(DXTestCase):
         cmd = "dx add member {o} {u} --level {l}"
 
         run(cmd.format(o=self.org_id, u=self.username, l="ADMIN"))
-        exp_membership = {"user": self.user_id, "level": "ADMIN"}
-        membership = self._org_get_member_access(self.user_id)
+        exp_membership = {"id": self.user_id,
+                          "level": "ADMIN",
+                          "allowBillableActivities": True,
+                          "createProjectsAndApps": True,
+                          "appAccess": True,
+                          "projectAccess": "ADMINISTER"}
+        membership = self._org_find_members(self.user_id)
         self.assertEqual(membership, exp_membership)
 
         self._remove_user(self.user_id)
 
         run(cmd.format(o=self.org_id, u=self.username, l="MEMBER"))
-        exp_membership = {"user": self.user_id, "level": "MEMBER",
+        exp_membership = {"id": self.user_id,
+                          "level": "MEMBER",
                           "allowBillableActivities": False,
+                          "createProjectsAndApps": False,
                           "appAccess": True,
                           "projectAccess": "CONTRIBUTE"}
-        self.assertDictContainsSubset(exp_membership, self._org_get_member_access(self.user_id))
+        membership = self._org_find_members(self.user_id)
+        self.assertEqual(membership, exp_membership)
 
     def test_add_membership_with_options(self):
         cmd = "dx add member {o} {u} --level {l}"
 
         run("{cmd} --no-app-access --project-access NONE".format(
             cmd=cmd.format(o=self.org_id, u=self.username, l="ADMIN")))
-        exp_membership = {"user": self.user_id, "level": "ADMIN"}
-        membership = self._org_get_member_access(self.user_id)
+        exp_membership = {"id": self.user_id,
+                          "level": "ADMIN",
+                          "allowBillableActivities": True,
+                          "createProjectsAndApps": True,
+                          "appAccess": True,
+                          "projectAccess": "ADMINISTER"}
+        membership = self._org_find_members(self.user_id)
         self.assertEqual(membership, exp_membership)
 
         self._remove_user(self.user_id)
 
         run("{cmd} --allow-billable-activities --no-app-access --project-access NONE".format(
             cmd=cmd.format(o=self.org_id, u=self.username, l="MEMBER")))
-        exp_membership = {"user": self.user_id, "level": "MEMBER",
+        exp_membership = {"id": self.user_id,
+                          "level": "MEMBER",
                           "allowBillableActivities": True,
+                          "createProjectsAndApps": True,
                           "appAccess": False,
                           "projectAccess": "NONE"}
-        self.assertDictContainsSubset(exp_membership, self._org_get_member_access(self.user_id))
+        membership = self._org_find_members(self.user_id)
+        self.assertEqual(membership, exp_membership)
 
     def test_add_membership_negative(self):
         cmd = "dx add member"
@@ -4308,28 +4809,35 @@ class TestDXClientMembership(DXTestCase):
         self._add_user(self.user_id)
 
         # Cannot add a user who is already a member of the org.
-        with self.assertRaisesRegexp(subprocess.CalledProcessError,
-                                     "DXCLIError"):
+        with self.assertRaisesRegexp(subprocess.CalledProcessError, "DXCLIError"):
             run(" ".join([cmd, self.org_id, self.username, "--level ADMIN"]))
 
     def test_remove_membership_default(self):
         self._add_user(self.user_id)
 
-        exp_membership = {"user": self.user_id, "level": "ADMIN"}
-        membership = self._org_get_member_access(self.user_id)
+        exp_membership = {"id": self.user_id,
+                          "level": "ADMIN",
+                          "allowBillableActivities": True,
+                          "createProjectsAndApps": True,
+                          "appAccess": True,
+                          "projectAccess": "ADMINISTER"}
+        membership = self._org_find_members(self.user_id)
         self.assertEqual(membership, exp_membership)
 
-        run("dx remove member {o} {u} -y".format(o=self.org_id,
-                                                 u=self.username))
-
-        with self.assertRaisesRegexp(DXAPIError, "404"):
-            self._org_get_member_access(self.user_id)
+        run("dx remove member {o} {u} -y".format(o=self.org_id, u=self.username))
+        with self.assertRaises(IndexError):
+            self._org_find_members(self.user_id)
 
     def test_remove_membership_interactive_conf(self):
         self._add_user(self.user_id)
 
-        exp_membership = {"user": self.user_id, "level": "ADMIN"}
-        membership = self._org_get_member_access(self.user_id)
+        exp_membership = {"id": self.user_id,
+                          "level": "ADMIN",
+                          "allowBillableActivities": True,
+                          "createProjectsAndApps": True,
+                          "appAccess": True,
+                          "projectAccess": "ADMINISTER"}
+        membership = self._org_find_members(self.user_id)
         self.assertEqual(membership, exp_membership)
 
         dx_rm_member_int = pexpect.spawn("dx remove member {o} {u}".format(
@@ -4338,7 +4846,7 @@ class TestDXClientMembership(DXTestCase):
         dx_rm_member_int.sendline("")
         dx_rm_member_int.expect("Please confirm")
 
-        membership = self._org_get_member_access(self.user_id)
+        membership = self._org_find_members(self.user_id)
         self.assertEqual(membership, exp_membership)
 
         dx_rm_member_int = pexpect.spawn("dx remove member {o} {u}".format(
@@ -4346,7 +4854,7 @@ class TestDXClientMembership(DXTestCase):
         dx_rm_member_int.expect("Please confirm")
         dx_rm_member_int.sendintr()
 
-        membership = self._org_get_member_access(self.user_id)
+        membership = self._org_find_members(self.user_id)
         self.assertEqual(membership, exp_membership)
 
         dx_rm_member_int = pexpect.spawn("dx remove member {o} {u}".format(
@@ -4355,7 +4863,7 @@ class TestDXClientMembership(DXTestCase):
         dx_rm_member_int.sendline("n")
         dx_rm_member_int.expect("Aborting removal")
 
-        membership = self._org_get_member_access(self.user_id)
+        membership = self._org_find_members(self.user_id)
         self.assertEqual(membership, exp_membership)
 
         dx_rm_member_int = pexpect.spawn("dx remove member {o} {u}".format(
@@ -4368,8 +4876,13 @@ class TestDXClientMembership(DXTestCase):
     def test_remove_membership_interactive_conf_format(self):
         self._add_user(self.user_id)
 
-        exp_membership = {"user": self.user_id, "level": "ADMIN"}
-        membership = self._org_get_member_access(self.user_id)
+        exp_membership = {"id": self.user_id,
+                          "level": "ADMIN",
+                          "allowBillableActivities": True,
+                          "createProjectsAndApps": True,
+                          "appAccess": True,
+                          "projectAccess": "ADMINISTER"}
+        membership = self._org_find_members(self.user_id)
         self.assertEqual(membership, exp_membership)
 
         project_id_1 = "project-000000000000000000000001"
@@ -4407,7 +4920,7 @@ class TestDXClientMembership(DXTestCase):
 
         # Cannot remove a user who is not currently a member of the org.
         with self.assertRaisesRegexp(subprocess.CalledProcessError,
-                                     "ResourceNotFound"):
+                                     "DXCLIError"):
             run(" ".join([cmd, self.org_id, self.username]))
 
         called_process_error_opts = [
@@ -4419,19 +4932,80 @@ class TestDXClientMembership(DXTestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 run(" ".join([cmd, invalid_opts]))
 
-    def test_update_membership_default(self):
+    def test_update_membership_positive(self):
+        # default test
         self._add_user(self.user_id)
 
-        exp_membership = {"user": self.user_id, "level": "ADMIN"}
-        membership = self._org_get_member_access(self.user_id)
+        exp_membership = {"id": self.user_id,
+                          "level": "ADMIN",
+                          "allowBillableActivities": True,
+                          "createProjectsAndApps": True,
+                          "appAccess": True,
+                          "projectAccess": "ADMINISTER"}
+        membership = self._org_find_members(self.user_id)
         self.assertEqual(membership, exp_membership)
 
         run("dx update member {o} {u} --level MEMBER --allow-billable-activities false --project-access VIEW --app-access true".format(
             o=self.org_id, u=self.username))
-        exp_membership = {"user": self.user_id, "level": "MEMBER",
+        exp_membership = {"id": self.user_id,
+                          "level": "MEMBER",
                           "allowBillableActivities": False,
-                          "projectAccess": "VIEW", "appAccess": True}
-        self.assertDictContainsSubset(exp_membership, self._org_get_member_access(self.user_id))
+                          "createProjectsAndApps": False,
+                          "projectAccess": "VIEW",
+                          "appAccess": True}
+        membership = self._org_find_members(self.user_id)
+        self.assertEqual(membership, exp_membership)
+
+        run("dx update member {o} {u} --allow-billable-activities true --app-access false".format(
+            o=self.org_id, u=self.username))
+        exp_membership = {"id": self.user_id,
+                          "level": "MEMBER",
+                          "allowBillableActivities": True,
+                          "createProjectsAndApps": True,
+                          "projectAccess": "VIEW",
+                          "appAccess": False}
+
+        membership = self._org_find_members(self.user_id)
+        self.assertEqual(membership, exp_membership)
+
+    def test_update_membership_to_member_without_membership_flags(self):
+        cmd = "dx update member {o} {u} --level MEMBER".format(o=self.org_id, u=self.username)
+
+        # ADMIN to MEMBER.
+        self._add_user(self.user_id)
+        exp = {"id": self.user_id,
+               "level": "ADMIN",
+               "allowBillableActivities": True,
+               "createProjectsAndApps": True,
+               "projectAccess": "ADMINISTER",
+               "appAccess": True}
+        membership_response = self._org_find_members(self.user_id)
+        self.assertEqual(membership_response, exp)
+
+        run(cmd)
+        exp = {"id": self.user_id,
+               "level": "MEMBER",
+               "allowBillableActivities": False,
+               "createProjectsAndApps": False,
+               "projectAccess": "CONTRIBUTE",
+               "appAccess": True}
+        membership_response = self._org_find_members(self.user_id)
+        self.assertEqual(membership_response, exp)
+
+        # MEMBER to MEMBER.
+        run(cmd + " --allow-billable-activities true")
+        exp = {"id": self.user_id,
+               "level": "MEMBER",
+               "allowBillableActivities": True,
+               "createProjectsAndApps": True,
+               "projectAccess": "CONTRIBUTE",
+               "appAccess": True}
+        membership_response = self._org_find_members(self.user_id)
+        self.assertEqual(membership_response, exp)
+
+        run(cmd)
+        membership_response = self._org_find_members(self.user_id)
+        self.assertEqual(membership_response, exp)
 
     def test_update_membership_negative(self):
         cmd = "dx update member"
@@ -4439,56 +5013,118 @@ class TestDXClientMembership(DXTestCase):
         # Cannot update the membership of a user who is not currently a member
         # of the org.
         with self.assertRaisesRegexp(subprocess.CalledProcessError,
-                                     "ResourceNotFound"):
+                                     "DXCLIError"):
             run(" ".join([cmd, self.org_id, self.username, "--level ADMIN"]))
 
         called_process_error_opts = [
             "",
             "some_username --level ADMIN",
             "org-foo --level ADMIN",
-            "org-foo some_username",
             "org-foo some_username --level NONE",
         ]
+
         for invalid_opts in called_process_error_opts:
             with self.assertRaises(subprocess.CalledProcessError):
                 run(" ".join([cmd, invalid_opts]))
 
+        # We expect the following to fail as an API call, as ADMIN doesn't
+        # take options
+        self._add_user(self.user_id)
+
+        api_error_opts = [
+            "{} {} --allow-billable-activities true".format(self.org_id,
+                                                            self.username),
+        ]
+
+        for invalid_opt in api_error_opts:
+            with self.assertRaisesRegexp(subprocess.CalledProcessError,
+                                         "InvalidInput"):
+                run(' '.join([cmd, invalid_opt]))
+
     def test_add_update_remove_membership(self):
         cmd = "dx add member {o} {u} --level {l} --project-access UPLOAD"
         run(cmd.format(o=self.org_id, u=self.username, l="MEMBER"))
-        exp_membership = {"user": self.user_id, "level": "MEMBER",
+        exp_membership = {"id": self.user_id,
+                          "level": "MEMBER",
                           "allowBillableActivities": False,
+                          "createProjectsAndApps": False,
                           "appAccess": True,
                           "projectAccess": "UPLOAD"}
-        self.assertDictContainsSubset(exp_membership, self._org_get_member_access(self.user_id))
+        membership = self._org_find_members(self.user_id)
+        self.assertEqual(membership, exp_membership)
 
         cmd = "dx update member {o} {u} --level MEMBER --allow-billable-activities true"
         run(cmd.format(o=self.org_id, u=self.username))
-        exp_membership = {"user": self.user_id, "level": "MEMBER",
-                          "allowBillableActivities": True,
-                          "appAccess": True,
-                          "projectAccess": "UPLOAD"}
-        self.assertDictContainsSubset(exp_membership, self._org_get_member_access(self.user_id))
+        exp_membership.update(allowBillableActivities=True, createProjectsAndApps=True)
+        membership = self._org_find_members(self.user_id)
+        self.assertEqual(membership, exp_membership)
 
         cmd = "dx update member {o} {u} --level ADMIN"
         run(cmd.format(o=self.org_id, u=self.username))
-        exp_membership = {"user": self.user_id, "level": "ADMIN"}
-        membership = self._org_get_member_access(self.user_id)
+        exp_membership = {"id": self.user_id,
+                          "level": "ADMIN",
+                          "allowBillableActivities": True,
+                          "createProjectsAndApps": True,
+                          "appAccess": True,
+                          "projectAccess": "ADMINISTER"}
+        membership = self._org_find_members(self.user_id)
         self.assertEqual(membership, exp_membership)
 
         cmd = "dx update member {o} {u} --level MEMBER --allow-billable-activities true --project-access CONTRIBUTE --app-access false"
         run(cmd.format(o=self.org_id, u=self.username))
-        exp_membership = {"user": self.user_id, "level": "MEMBER",
-                          "allowBillableActivities": True,
-                          "appAccess": False,
-                          "projectAccess": "CONTRIBUTE"}
-        self.assertDictContainsSubset(exp_membership, self._org_get_member_access(self.user_id))
+        exp_membership.update(level="MEMBER", projectAccess="CONTRIBUTE", appAccess=False)
+        membership = self._org_find_members(self.user_id)
+        self.assertEqual(membership, exp_membership)
 
         cmd = "dx remove member {o} {u} -y"
         run(cmd.format(o=self.org_id, u=self.username))
 
-        with self.assertRaisesRegexp(DXAPIError, "404"):
-            self._org_get_member_access(self.user_id)
+        with self.assertRaises(IndexError):
+            self._org_find_members(self.user_id)
+
+    def test_add_update_remove_membership_with_user_id(self):
+        # This is similar to `test_add_update_remove_membership()` above, but
+        # it specifies user id instead of username as arg to `dx` command.
+
+        cmd = "dx add member {o} {u} --level {l} --project-access UPLOAD"
+        run(cmd.format(o=self.org_id, u=self.user_id, l="MEMBER"))
+        exp_membership = {"id": self.user_id,
+                          "level": "MEMBER",
+                          "allowBillableActivities": False,
+                          "createProjectsAndApps": False,
+                          "appAccess": True,
+                          "projectAccess": "UPLOAD"}
+        membership = self._org_find_members(self.user_id)
+        self.assertEqual(membership, exp_membership)
+
+        cmd = "dx update member {o} {u} --level MEMBER --allow-billable-activities true"
+        run(cmd.format(o=self.org_id, u=self.user_id))
+        exp_membership.update(allowBillableActivities=True, createProjectsAndApps=True)
+        membership = self._org_find_members(self.user_id)
+        self.assertEqual(membership, exp_membership)
+
+        cmd = "dx update member {o} {u} --level ADMIN"
+        run(cmd.format(o=self.org_id, u=self.user_id))
+        exp_membership = {"id": self.user_id,
+                          "level": "ADMIN",
+                          "allowBillableActivities": True,
+                          "createProjectsAndApps": True,
+                          "appAccess": True,
+                          "projectAccess": "ADMINISTER"}
+        membership = self._org_find_members(self.user_id)
+        self.assertEqual(membership, exp_membership)
+
+        cmd = "dx update member {o} {u} --level MEMBER --allow-billable-activities true --project-access CONTRIBUTE --app-access false"
+        run(cmd.format(o=self.org_id, u=self.user_id))
+        exp_membership.update(level="MEMBER", projectAccess="CONTRIBUTE", appAccess=False)
+        membership = self._org_find_members(self.user_id)
+        self.assertEqual(membership, exp_membership)
+
+        cmd = "dx remove member {o} {u} -y"
+        run(cmd.format(o=self.org_id, u=self.user_id))
+
+        with self.assertRaises(IndexError):
+            self._org_find_members(self.user_id)
 
 
 @unittest.skipUnless(testutil.TEST_HTTP_PROXY,
@@ -5088,6 +5724,25 @@ class TestDXBuildApp(DXTestCase):
                                            'user-000000000000000000000001')
         app_developers = dxpy.api.app_list_developers('app-test_build_app_and_update_devs')['developers']
         self.assertEqual(app_developers, [my_userid])
+
+    @unittest.skipUnless(testutil.TEST_ISOLATED_ENV,
+                         'skipping test that would create apps')
+    def test_build_app_with_region(self):
+        app_spec = {
+            "name": "minimal_app_regions",
+            "dxapi": "1.0.0",
+            "runSpec": {"file": "code.py", "interpreter": "python2.7"},
+            "inputSpec": [],
+            "outputSpec": [],
+            "version": "1.0.0"
+            }
+        app_dir = self.write_app_directory("minimal_app_regions", json.dumps(app_spec), "code.py")
+        new_app = json.loads(run("dx build --create-app --region aws:us-east-1 --json " + app_dir))
+        app_describe = json.loads(run("dx describe --json " + new_app["id"]))
+        self.assertEqual(app_describe["region"], "aws:us-east-1")
+
+        with self.assertRaisesRegexp(subprocess.CalledProcessError, "InvalidInput"):
+            run("dx build --create-app --region aws:not-a-region --json " + app_dir)
 
     @unittest.skipUnless(testutil.TEST_ISOLATED_ENV,
                          'skipping test that would create apps')

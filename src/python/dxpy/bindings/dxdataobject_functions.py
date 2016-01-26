@@ -26,12 +26,13 @@ full object handler.
 
 '''
 
-from __future__ import (print_function, unicode_literals)
+from __future__ import print_function, unicode_literals, division, absolute_import
 
 import dxpy
 from . import DXDataObject
 from . import __dict__ as all_bindings
 from ..exceptions import DXError
+from ..compat import basestring
 
 def dxlink(object_id, project_id=None):
     '''
