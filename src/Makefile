@@ -211,7 +211,7 @@ install: base_install
 
 debian_install: base_install
 	cp -a $(DNANEXUS_HOME)/share $(DESTDIR)/$(PREFIX)                          # core libraries
-	mkdir -p $(DESTDIR)/$(PREFIX)/share/dnanexus/build
+	mkdir -p $(DESTDIR)/$(PREFIX)/share/dnanexus/{build,lib}
 	cp -a $(DNANEXUS_HOME)/build/info $(DESTDIR)/$(PREFIX)/share/dnanexus/build/
 	rm -f $(DESTDIR)/$(PREFIX)/share/dnanexus/src/cpp/*/.gitignore
 	cp -a $(DNANEXUS_HOME)/doc $(DESTDIR)/$(PREFIX)/share/dnanexus             # docs
@@ -220,8 +220,7 @@ debian_install: base_install
 
 	mkdir -p $(DESTDIR)/etc/profile.d                                        # Install environment file into etc
 	install -v -m0644 $(DNANEXUS_HOME)/environment $(DESTDIR)/etc/profile.d/dnanexus.environment
-	cp -a $(DNANEXUS_HOME)/share/dnanexus/lib/python2.7/site-packages/* $(DESTDIR)/$(PREFIX)/share/dnanexus/lib/python2.7/site-packages/
-	ls $(DNANEXUS_HOME)/share/dnanexus/lib/python2.7/site-packages | grep dxpy > $(DESTDIR)/$(PREFIX)/share/dnanexus/lib/python2.7/site-packages/dxpy.pth
+	cp -a $(DNANEXUS_LIBDIR)/python?.? $(DESTDIR)/$(PREFIX)/share/dnanexus/lib
 
 debian_java_install: java
 	mkdir -p $(DESTDIR)/$(PREFIX)/share/java
