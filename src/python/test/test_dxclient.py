@@ -5122,6 +5122,109 @@ class TestDXClientMembership(DXTestCase):
             self._org_find_members(self.user_id)
 
 
+class TestDXClientUpdateProject(DXTestCase):
+    cmd = "dx update project {pid} --{item} {n}"
+
+    def removeQuotes(self, text):
+        return text.replace("\"", "")
+
+    def project_describe(self, input_params):
+        return dxpy.api.project_describe(self.project, input_params)
+
+    def test_update_strings(self):
+        update_items = {'name': 'NewProjectName',
+                        'summary': '\"This is a summary\"',
+                        'description': '\"This is a description\"'}
+
+        #Update items one by one.
+        for item in update_items:
+            print ("Testing", item, update_items[item])
+            run(self.cmd.format(pid=self.project, item=item, n=update_items[item]))
+            describe_input = {}
+            describe_input[item] = 'true'
+            self.assertEqual(self.project_describe(describe_input)[item],
+                             self.removeQuotes(update_items[item]))
+
+    def test_update_multiple_items(self):
+        #Test updating multiple items in a single api call
+        update_items = {'name': 'NewProjectName',
+                        'summary': '\"This is new a summary\"',
+                        'description': '\"This is new a description\"',
+                        'protected': 'false'}
+
+        cmd = "dx update project {pid} --name {name} --summary {summary} --description {desc} --protected {protect}"
+
+        run(cmd.format(pid=self.project, name=update_items['name'],
+                       summary=update_items['summary'], desc=update_items['description'],
+                       protect=update_items['protected']))
+
+        describe_input = {}
+        for item in update_items:
+            describe_input[item] = 'true'
+
+        result = self.project_describe(describe_input)
+
+        for item in update_items:
+            if item == 'protected':
+                self.assertFalse(result[item])
+            else:
+                self.assertEqual(result[item], self.removeQuotes(update_items[item]))
+
+    def test_update_booleans(self):
+        update_items = {'protected': 'true',
+                        'restricted': 'true'}
+
+        for item in update_items:
+            print ("Testing", item, update_items[item])
+            run(self.cmd.format(pid=self.project, item=item, n=update_items[item]))
+            describe_input = {}
+            describe_input[item] = 'true'
+            self.assertTrue(self.project_describe(describe_input)[item])
+
+    def test_empty_project_id(self):
+        cmd = "dx update project"
+
+        with self.assertRaises(subprocess.CalledProcessError):
+            run(cmd)
+
+    def test_empty_arguments(self):
+        update_items = {'name': '',
+                        'summary': '',
+                        'description': ''}
+
+        for item in update_items:
+            print ("Testing empty argument:", item, update_items[item])
+            with self.assertSubprocessFailure(exit_code=2):
+                run(self.cmd.format(pid=self.project, item=item, n=update_items[item]))
+
+    def test_show_api_error(self):
+    #Make sure we forward api  error msg
+    #Updating the project using the project name should fail with ResourceNotFound
+        describe_input = {}
+        describe_input['name'] = 'true'
+        project_name = self.project_describe(describe_input)['name']
+        new_name = "\"Another Project Name\""
+
+        with self.assertSubprocessFailure(stderr_text="ResourceNotFound"):
+            run(self.cmd.format(pid=project_name, item='name', n=new_name))
+
+    def test_invalid_argument(self):
+        describe_input = {}
+        describe_input['name'] = 'true'
+        project_name = self.project_describe(describe_input)['name']
+        invalid_argument = "Invalid Argument"
+
+        with self.assertSubprocessFailure(stderr_text="invalid choice", exit_code=2):
+            run(self.cmd.format(pid=project_name, item='protected', n=invalid_argument))
+
+    def test_bill_non_existent_user(self):
+        # Test that the api returns an invalid input when giving a non existing user
+        cmd = "dx update project {pid} --bill_to user-wronguser"
+
+        with self.assertSubprocessFailure(stderr_text="InvalidInput"):
+            run(cmd.format(pid=self.project))
+
+
 @unittest.skipUnless(testutil.TEST_HTTP_PROXY,
                      'skipping HTTP Proxy support test that needs squid3')
 class TestHTTPProxySupport(DXTestCase):

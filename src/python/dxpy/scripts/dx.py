@@ -171,7 +171,7 @@ class DXCLICompleter():
                    'new': ['record ', 'project ', 'workflow ', 'org ', 'user '],
                    'add': ['developers ', 'users ', 'stage ', 'member '],
                    'remove': ['developers ', 'users ', 'stage ', 'member '],
-                   'update': ['stage ', 'workflow ', 'org ', 'member '],
+                   'update': ['stage ', 'workflow ', 'org ', 'member ', 'project '],
                    'org': ['projects ', 'members ']}
 
     silent_commands = set(['import'])
@@ -2352,6 +2352,31 @@ def find_apps(args):
     except:
         err_exit()
 
+
+def update_project(args):
+    input_params = {}
+    if args.name is not None:
+        input_params["name"] = args.name
+    if args.summary is not None:
+        input_params["summary"] = args.summary
+    if args.description is not None:
+        input_params["description"] = args.description
+    if args.protected is not None:
+        input_params["protected"] = True if args.protected == 'true' else False
+    if args.restricted is not None:
+        input_params["restricted"] = True if args.restricted == 'true' else False
+    if args.containsPHI is not None:
+        input_params["containsPHI"] = True if args.containsPHI == 'true' else False
+    if args.bill_to is not None:
+        input_params["billTo"] = args.bill_to
+
+    try:
+        results = dxpy.api.project_update(object_id=args.project_id, input_params=input_params)
+        print(results)
+    except:
+        err_exit()
+
+
 def close(args):
     if '_DX_FUSE' in os.environ:
         from xattr import xattr
@@ -3997,6 +4022,22 @@ parser_update_member.add_argument("--app-access", choices=["true", "false"], hel
 parser_update_member.add_argument("--project-access", choices=["ADMINISTER", "CONTRIBUTE", "UPLOAD", "VIEW", "NONE"], help='The new default implicit maximum permission the specified user will receive to projects explicitly shared with the org; default CONTRIBUTE if demoting the specified user from ADMIN to MEMBER')
 parser_update_member.set_defaults(func=update_membership)
 register_parser(parser_update_member, subparsers_action=subparsers_update, categories="org")
+
+parser_update_project = subparsers_update.add_parser("project", help="Update the information of a project",
+                                                     description="", prog="dx update project",
+                                                     parents=[stdout_args, env_args])
+parser_update_project.add_argument('project_id', help="Project Id or project Name")
+parser_update_project.add_argument('--name', help="Update the name of the project")
+parser_update_project.add_argument('--summary', help="Update the summary of the project")
+parser_update_project.add_argument('--description', help="Update the description of the project")
+parser_update_project.add_argument('--protected', choices=["true", "false"],
+                                   help="require ADMINISTER permissions to delete data")
+parser_update_project.add_argument('--restricted', choices=["true", "false"], help="Allow cloning out the project")
+parser_update_project.add_argument('--containsPHI', choices=["true", "false"],
+                                   help="Flag to tell if project contains PHI")
+parser_update_project.add_argument('--bill_to', help="Update the user or org ID of the billing account", type=str)
+parser_update_project.set_defaults(func=update_project)
+register_parser(parser_update_project, subparsers_action=subparsers_update, categories="metadata")
 
 parser_install = subparsers.add_parser('install', help='Install an app',
                                        description='Install an app by name.  To see a list of apps you can install, hit <TAB> twice after "dx install" or run "' + BOLD('dx find apps') + '" to see a list of available apps.', prog='dx install',
