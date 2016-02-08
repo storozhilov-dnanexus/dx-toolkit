@@ -5170,6 +5170,17 @@ class TestDXClientUpdateProject(DXTestCase):
             else:
                 self.assertEqual(result[item], self.removeQuotes(update_items[item]))
 
+    def test_update_project_by_name(self):
+        describe_input = {}
+        describe_input['name'] = 'true'
+        
+        project_name = self.project_describe(describe_input)['name']
+        new_name = '"Another Project Name"'
+
+        run(self.cmd.format(pid=project_name, item='name', n=new_name))
+        result = self.project_describe( describe_input )
+        self.assertEqual(result['name'], self.removeQuotes(new_name))
+
     def test_update_booleans(self):
         update_items = {'protected': 'true',
                         'restricted': 'true'}
@@ -5197,16 +5208,9 @@ class TestDXClientUpdateProject(DXTestCase):
             with self.assertSubprocessFailure(exit_code=2):
                 run(self.cmd.format(pid=self.project, item=item, n=update_items[item]))
 
-    def test_show_api_error(self):
-    #Make sure we forward api  error msg
-    #Updating the project using the project name should fail with ResourceNotFound
-        describe_input = {}
-        describe_input['name'] = 'true'
-        project_name = self.project_describe(describe_input)['name']
-        new_name = "\"Another Project Name\""
-
-        with self.assertSubprocessFailure(stderr_text="ResourceNotFound"):
-            run(self.cmd.format(pid=project_name, item='name', n=new_name))
+    def test_resolution_error(self):
+        with self.assertSubprocessFailure(stderr_text="ResolutionError"):
+            run(self.cmd.format(pid='"Wrong Project Name"', item='name', n='"Some name"'))
 
     def test_invalid_argument(self):
         describe_input = {}

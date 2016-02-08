@@ -2355,8 +2355,14 @@ def find_apps(args):
 def update_project(args):
     input_params = get_update_project_args(args)
     
+    # The resolver expects a ':' to separate projects from folders.
+    if ':' not in args.project_id:
+        args.project_id += ':'
+
+    project, _none, _none = try_call(resolve_existing_path,
+                                     args.project_id, 'project')
     try:
-        results = dxpy.api.project_update(object_id=args.project_id, input_params=input_params)
+        results = dxpy.api.project_update(object_id=project, input_params=input_params)
         print(results)
     except:
         err_exit()
