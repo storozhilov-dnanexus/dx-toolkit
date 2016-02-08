@@ -42,7 +42,7 @@ from ..cli.parsers import (no_color_arg, delim_arg, env_args, stdout_args, all_a
                            find_by_properties_and_tags_args, process_find_by_property_args, process_dataobject_args,
                            process_single_dataobject_output_args, find_executions_args, add_find_executions_search_gp,
                            set_env_from_args, extra_args, process_extra_args, DXParserError, exec_input_args,
-                           instance_type_arg, process_instance_type_arg)
+                           instance_type_arg, process_instance_type_arg, get_update_project_args)
 from ..cli.exec_io import (ExecutableInputs, format_choices_or_suggestions)
 from ..cli.org import (get_org_invite_args, add_membership, remove_membership, update_membership, new_org, update_org,
                        find_orgs, org_find_members, org_find_projects)
@@ -2352,30 +2352,14 @@ def find_apps(args):
     except:
         err_exit()
 
-
 def update_project(args):
-    input_params = {}
-    if args.name is not None:
-        input_params["name"] = args.name
-    if args.summary is not None:
-        input_params["summary"] = args.summary
-    if args.description is not None:
-        input_params["description"] = args.description
-    if args.protected is not None:
-        input_params["protected"] = True if args.protected == 'true' else False
-    if args.restricted is not None:
-        input_params["restricted"] = True if args.restricted == 'true' else False
-    if args.containsPHI is not None:
-        input_params["containsPHI"] = True if args.containsPHI == 'true' else False
-    if args.bill_to is not None:
-        input_params["billTo"] = args.bill_to
-
+    input_params = get_update_project_args(args)
+    
     try:
         results = dxpy.api.project_update(object_id=args.project_id, input_params=input_params)
         print(results)
     except:
         err_exit()
-
 
 def close(args):
     if '_DX_FUSE' in os.environ:
