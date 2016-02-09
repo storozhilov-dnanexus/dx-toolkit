@@ -2352,9 +2352,10 @@ def find_apps(args):
     except:
         err_exit()
 
+
 def update_project(args):
     input_params = get_update_project_args(args)
-    
+
     # The resolver expects a ':' to separate projects from folders.
     if ':' not in args.project_id:
         args.project_id += ':'
@@ -4016,7 +4017,8 @@ parser_update_member.add_argument("--project-access", choices=["ADMINISTER", "CO
 parser_update_member.set_defaults(func=update_membership)
 register_parser(parser_update_member, subparsers_action=subparsers_update, categories="org")
 
-parser_update_project = subparsers_update.add_parser("project", help="Updates a specified project with the specified options",
+parser_update_project = subparsers_update.add_parser("project",
+                                                     help="Updates a specified project with the specified options",
                                                      description="", prog="dx update project",
                                                      parents=[stdout_args, env_args])
 parser_update_project.add_argument('project_id', help="Project Id or project Name")
@@ -4025,7 +4027,8 @@ parser_update_project.add_argument('--summary', help="Project summary")
 parser_update_project.add_argument('--description', help="Project description")
 parser_update_project.add_argument('--protected', choices=["true", "false"],
                                    help="Whether the project should be PROTECTED")
-parser_update_project.add_argument('--restricted', choices=["true", "false"], help="Whether the project should be RESTRICTED")
+parser_update_project.add_argument('--restricted', choices=["true", "false"],
+                                   help="Whether the project should be RESTRICTED")
 parser_update_project.add_argument('--containsPHI', choices=["true", "false"],
                                    help="Flag to tell if project contains PHI")
 parser_update_project.add_argument('--bill_to', help="Update the user or org ID of the billing account", type=str)

@@ -289,6 +289,7 @@ def process_instance_type_arg(args, for_workflow=False):
             # is a string
             args.instance_type = _parse_inst_type(args.instance_type)
 
+
 def get_update_project_args(args):
     input_params = {}
     if args.name is not None:

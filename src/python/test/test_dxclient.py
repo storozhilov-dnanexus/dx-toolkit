@@ -5133,8 +5133,8 @@ class TestDXClientUpdateProject(DXTestCase):
 
     def test_update_strings(self):
         update_items = {'name': 'NewProjectName',
-                        'summary': '\"This is a summary\"',
-                        'description': '\"This is a description\"'}
+                        'summary': '"This is a summary"',
+                        'description': '"This is a description"'}
 
         #Update items one by one.
         for item in update_items:
@@ -5173,12 +5173,12 @@ class TestDXClientUpdateProject(DXTestCase):
     def test_update_project_by_name(self):
         describe_input = {}
         describe_input['name'] = 'true'
-        
+
         project_name = self.project_describe(describe_input)['name']
         new_name = '"Another Project Name"'
 
         run(self.cmd.format(pid=project_name, item='name', n=new_name))
-        result = self.project_describe( describe_input )
+        result = self.project_describe(describe_input)
         self.assertEqual(result['name'], self.removeQuotes(new_name))
 
     def test_update_booleans(self):
@@ -5191,12 +5191,6 @@ class TestDXClientUpdateProject(DXTestCase):
             describe_input = {}
             describe_input[item] = 'true'
             self.assertTrue(self.project_describe(describe_input)[item])
-
-    def test_empty_project_id(self):
-        cmd = "dx update project"
-
-        with self.assertRaises(subprocess.CalledProcessError):
-            run(cmd)
 
     def test_empty_arguments(self):
         update_items = {'name': '',
@@ -5211,15 +5205,6 @@ class TestDXClientUpdateProject(DXTestCase):
     def test_resolution_error(self):
         with self.assertSubprocessFailure(stderr_text="ResolutionError"):
             run(self.cmd.format(pid='"Wrong Project Name"', item='name', n='"Some name"'))
-
-    def test_invalid_argument(self):
-        describe_input = {}
-        describe_input['name'] = 'true'
-        project_name = self.project_describe(describe_input)['name']
-        invalid_argument = "Invalid Argument"
-
-        with self.assertSubprocessFailure(stderr_text="invalid choice", exit_code=2):
-            run(self.cmd.format(pid=project_name, item='protected', n=invalid_argument))
 
     def test_bill_non_existent_user(self):
         # Test that the api returns an invalid input when giving a non existing user
