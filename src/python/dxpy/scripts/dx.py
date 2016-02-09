@@ -2363,10 +2363,8 @@ def update_project(args):
                                      args.project_id, 'project')
     try:
         results = dxpy.api.project_update(object_id=project, input_params=input_params)
-        print (results, type(results))
-        print ( results['id'])
         if args.brief:
-            print ( results['id'])
+            print (results['id'])
         else:
             print(results)
     except:
@@ -4018,16 +4016,16 @@ parser_update_member.add_argument("--project-access", choices=["ADMINISTER", "CO
 parser_update_member.set_defaults(func=update_membership)
 register_parser(parser_update_member, subparsers_action=subparsers_update, categories="org")
 
-parser_update_project = subparsers_update.add_parser("project", help="Update the information of a project",
+parser_update_project = subparsers_update.add_parser("project", help="Updates a specified project with the specified options",
                                                      description="", prog="dx update project",
                                                      parents=[stdout_args, env_args])
 parser_update_project.add_argument('project_id', help="Project Id or project Name")
-parser_update_project.add_argument('--name', help="Update the name of the project")
-parser_update_project.add_argument('--summary', help="Update the summary of the project")
-parser_update_project.add_argument('--description', help="Update the description of the project")
+parser_update_project.add_argument('--name', help="New project name")
+parser_update_project.add_argument('--summary', help="Project summary")
+parser_update_project.add_argument('--description', help="Project description")
 parser_update_project.add_argument('--protected', choices=["true", "false"],
-                                   help="require ADMINISTER permissions to delete data")
-parser_update_project.add_argument('--restricted', choices=["true", "false"], help="Allow cloning out the project")
+                                   help="Whether the project should be PROTECTED")
+parser_update_project.add_argument('--restricted', choices=["true", "false"], help="Whether the project should be RESTRICTED")
 parser_update_project.add_argument('--containsPHI', choices=["true", "false"],
                                    help="Flag to tell if project contains PHI")
 parser_update_project.add_argument('--bill_to', help="Update the user or org ID of the billing account", type=str)
