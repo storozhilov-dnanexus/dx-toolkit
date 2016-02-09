@@ -1572,11 +1572,18 @@ class TestDXClientDownloadDataEgressBilling(DXTestCase):
             run("dx download -f --no-progress {p}:{f}".format(p=proj.get_id(), f=file1_name))
             self.assertEqual(self.get_billed_project(), proj.get_id())
 
+            # In the two cases below, we need to remove the
+            # local file before downloading. The file has already
+            # been downloaded, and the 'dx download' code will skip
+            # re-downloading, causing test failure.
+
             # Success: project specified by name contains file specified by ID
+            os.remove(file2_name)
             run("dx download -f --no-progress {p}:{f}".format(p=proj2_name, f=file2_id))
             self.assertEqual(self.get_billed_project(), proj2.get_id())
 
             # Success: project specified by name contains file specified by name
+            os.remove(file1_name)
             run("dx download -f --no-progress {p}:{f}".format(p=proj1_name, f=file1_name))
             self.assertEqual(self.get_billed_project(), proj.get_id())
 
