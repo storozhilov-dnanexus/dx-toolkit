@@ -2363,7 +2363,12 @@ def update_project(args):
                                      args.project_id, 'project')
     try:
         results = dxpy.api.project_update(object_id=project, input_params=input_params)
-        print(results)
+        print (results, type(results))
+        print ( results['id'])
+        if args.brief:
+            print ( results['id'])
+        else:
+            print(results)
     except:
         err_exit()
 
