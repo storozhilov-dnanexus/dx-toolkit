@@ -5148,8 +5148,8 @@ class TestDXClientUpdateProject(DXTestCase):
     def test_update_multiple_items(self):
         #Test updating multiple items in a single api call
         update_items = {'name': 'NewProjectName',
-                        'summary': '\"This is new a summary\"',
-                        'description': '\"This is new a description\"',
+                        'summary': '"This is new a summary"',
+                        'description': '"This is new a description"',
                         'protected': 'false'}
 
         cmd = "dx update project {pid} --name {name} --summary {summary} --description {desc} --protected {protect}"
@@ -5186,25 +5186,10 @@ class TestDXClientUpdateProject(DXTestCase):
                         'restricted': 'true'}
 
         for item in update_items:
-            print ("Testing", item, update_items[item])
             run(self.cmd.format(pid=self.project, item=item, n=update_items[item]))
             describe_input = {}
             describe_input[item] = 'true'
             self.assertTrue(self.project_describe(describe_input)[item])
-
-    def test_empty_arguments(self):
-        update_items = {'name': '',
-                        'summary': '',
-                        'description': ''}
-
-        for item in update_items:
-            print ("Testing empty argument:", item, update_items[item])
-            with self.assertSubprocessFailure(exit_code=2):
-                run(self.cmd.format(pid=self.project, item=item, n=update_items[item]))
-
-    def test_resolution_error(self):
-        with self.assertSubprocessFailure(stderr_text="ResolutionError"):
-            run(self.cmd.format(pid='"Wrong Project Name"', item='name', n='"Some name"'))
 
     def test_bill_non_existent_user(self):
         # Test that the api returns an invalid input when giving a non existing user
