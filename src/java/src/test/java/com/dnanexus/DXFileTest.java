@@ -336,4 +336,18 @@ public class DXFileTest {
                 DXFile.newFile().setProject(testProject).setMediaType("application/json").build();
         Assert.assertEquals("application/json", file.describe().getMediaType());
     }
+
+    @Test
+    public void testDownloadChunks() {
+        // Upload 5mb
+        byte[] uploadBytes = new byte[5 * 1024 * 1024];
+        new Random().nextBytes(uploadBytes);
+
+        DXFile f = DXFile.newFile().setProject(testProject).build();
+        f.upload(uploadBytes);
+        f.closeAndWait();
+        byte[] downloadBytes = f.downloadChunks();
+
+        Assert.assertArrayEquals(uploadBytes, downloadBytes);
+    }
 }
