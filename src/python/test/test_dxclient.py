@@ -5138,7 +5138,6 @@ class TestDXClientUpdateProject(DXTestCase):
 
         #Update items one by one.
         for item in update_items:
-            print ("Testing", item, update_items[item])
             run(self.cmd.format(pid=self.project, item=item, n=update_items[item]))
             describe_input = {}
             describe_input[item] = 'true'
