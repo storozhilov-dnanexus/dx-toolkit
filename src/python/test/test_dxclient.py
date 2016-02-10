@@ -1407,7 +1407,11 @@ class TestDXClientDownloadDataEgressBilling(DXTestCase):
         with open(self.temp_file_fd.name, "r") as fd:
             return fd.read()
 
-    # clean testing state prior to running a download test
+    # Clean testing state prior to running a download test.
+    #
+    # We need to remove the local file before downloading. The file
+    # has already been downloaded, and the 'dx download' code will
+    # skip re-downloading, causing test failure.
     def prologue(self, file1, file2):
         with open(self.temp_file_fd.name, "w") as fd:
             fd.truncate()
@@ -1587,11 +1591,6 @@ class TestDXClientDownloadDataEgressBilling(DXTestCase):
             self.prologue(file1_name, file2_name)
             run("dx download -f --no-progress {p}:{f}".format(p=proj.get_id(), f=file1_name))
             self.assertEqual(self.get_billed_project(), proj.get_id())
-
-            # In the two cases below, we need to remove the
-            # local file before downloading. The file has already
-            # been downloaded, and the 'dx download' code will skip
-            # re-downloading, causing test failure.
 
             # Success: project specified by name contains file specified by ID
             self.prologue(file1_name, file2_name)
