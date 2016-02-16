@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.Map;
 
 import org.apache.commons.codec.digest.DigestUtils;
@@ -504,11 +505,11 @@ public class DXFile extends DXDataObject {
         }
     }
 
-    public static int chunkStart = 0;
-    public static int chunkEnd;
-    public static int chunkSize = 1024 * 16;
-    public static int ramp = 2;
-    public static int numRequestsBetweenRamp = 4;
+    public int chunkStart = 0;
+    public int chunkEnd;
+    public int chunkSize = 1024 * 64;
+    public int ramp = 2;
+    public int numRequestsBetweenRamp = 4;
 
     private byte[] chunkRequest(String url, int chunkStart, int chunkEnd) {
         HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
@@ -536,7 +537,7 @@ public class DXFile extends DXDataObject {
         JsonNode output = apiCallOnObject("download", MAPPER.valueToTree(new FileDownloadRequest(true)),
                 RetryStrategy.SAFE_TO_RETRY);
 
-        ByteBuffer bufferFile = ByteBuffer.allocate(fileSize);
+        ByteBuffer buffer = ByteBuffer.allocate(fileSize);
         FileDownloadResponse apiResponse;
         try {
             apiResponse = MAPPER.treeToValue(output, FileDownloadResponse.class);
@@ -553,11 +554,59 @@ public class DXFile extends DXDataObject {
             chunkEnd = Math.min(chunkStart + chunkSize, fileSize);
             //System.out.println(chunkStart + "|" + chunkEnd + "|" + chunkSize + "|" + fileSize); //DEBUG
             byte[] chunk = chunkRequest(apiResponse.url, chunkStart, chunkEnd);
-            bufferFile.put(chunk, chunkStart, chunk.length);
+            buffer.put(chunk, 0, chunk.length);
             chunkStart = chunkStart + chunkSize + 1;
             request++;
         }
 
-        return bufferFile.array();
+        return buffer.array();
+    }
+
+    public void uploadChunks(byte[] data) {
+        Preconditions.checkNotNull(data, "data may not be null");
+
+        fileSize = data.length;
+
+        // MD5 digest as 32 character hex string
+        String dataMD5 = DigestUtils.md5Hex(data);
+
+        // API call returns URL and headers
+        JsonNode output = apiCallOnObject("upload", MAPPER.valueToTree(new FileUploadRequest(data.length, dataMD5)),
+                RetryStrategy.SAFE_TO_RETRY);
+
+        FileUploadResponse apiResponse;
+        try {
+            apiResponse = MAPPER.treeToValue(output, FileUploadResponse.class);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
+
+        // Check that the content-length received by the apiserver is the same
+        // as the length of the data
+        if (apiResponse.headers.containsKey("content-length")) {
+            int apiserverContentLength = Integer.parseInt(apiResponse.headers.get("content-length"));
+            if (apiserverContentLength != data.length) {
+                throw new AssertionError(
+                        "Content-length received by the apiserver did not match that of the input data");
+            }
+        }
+
+         // HTTP PUT request to upload URL and headers
+         HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
+         HttpPut request = new HttpPut(apiResponse.url);
+
+         while (chunkStart > fileSize) {
+             chunkEnd = Math.min(chunkStart + chunkSize, fileSize);
+             ByteArrayEntity entity = new ByteArrayEntity(Arrays.copyOfRange(data, chunkStart, chunkEnd));
+             request.setEntity(entity);
+             request.addHeader("Content-Range", "bytes=" + chunkStart + "-" + chunkEnd);
+             try {
+                System.out.println(chunkStart + "|" + chunkEnd + "|" + chunkSize + "|" + fileSize); //DEBUG
+                httpclient.execute(request);
+             } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+             chunkStart = chunkStart + chunkSize + 1;
+         }
     }
 }
