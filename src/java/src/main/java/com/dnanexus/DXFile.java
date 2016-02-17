@@ -591,21 +591,46 @@ public class DXFile extends DXDataObject {
             }
         }
 
-         // HTTP PUT request to upload URL and headers
-         HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
-         HttpPut request = new HttpPut(apiResponse.url);
+//      HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
+//      try {
+//          HttpResponse res = httpclient.execute(request);
+//          int statusCode = res.getStatusLine().getStatusCode();
+//          System.out.println("request made " + statusCode); // dEBUG
+//      } catch (IOException e1) {
+//          throw new RuntimeException(e1);
+//      }
 
-         while (chunkStart > fileSize) {
+        // HTTP PUT request to upload URL and headers
+        HttpPut request = new HttpPut(apiResponse.url);
+
+         while (chunkStart < fileSize) {
+            for (Map.Entry<String, String> header : apiResponse.headers.entrySet()) {
+                String key = header.getKey();
+
+                // The request implicitly supplies the content length in the headers
+                // when executed
+                if (key.equals("content-length")) {
+                    continue;
+                }
+
+                request.setHeader(key, header.getValue());
+            }
+
              chunkEnd = Math.min(chunkStart + chunkSize, fileSize);
              ByteArrayEntity entity = new ByteArrayEntity(Arrays.copyOfRange(data, chunkStart, chunkEnd));
              request.setEntity(entity);
+             request.addHeader("Connection", "Keep-Alive");
              request.addHeader("Content-Range", "bytes=" + chunkStart + "-" + chunkEnd);
+             request.addHeader("Accept-Ranges", "bytes");
+             HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
              try {
                 System.out.println(chunkStart + "|" + chunkEnd + "|" + chunkSize + "|" + fileSize); //DEBUG
-                httpclient.execute(request);
+                HttpResponse res = httpclient.execute(request);
+                int statusCode = res.getStatusLine().getStatusCode();
+                System.out.println("request made " + statusCode); //dEBUG
              } catch (IOException e) {
                 throw new RuntimeException(e);
-            }
+             }
              chunkStart = chunkStart + chunkSize + 1;
          }
     }

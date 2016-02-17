@@ -359,7 +359,9 @@ public class DXFileTest {
 
         DXFile f = DXFile.newFile().setProject(testProject).build();
         f.uploadChunks(uploadBytes);
+        System.out.println("finished upload");
         f.closeAndWait();
+        System.out.println("Do we ever get here");
         byte[] downloadBytes = f.downloadChunks();
 
         Assert.assertArrayEquals(uploadBytes, downloadBytes);
