@@ -24,6 +24,7 @@ This remote file handler is a Python file-like object.
 from __future__ import print_function, unicode_literals, division, absolute_import
 
 import os, sys, logging, traceback, hashlib, copy, time
+from threading import Lock
 import concurrent.futures
 from multiprocessing import cpu_count
 
@@ -118,7 +119,13 @@ class DXFile(DXDataObject):
         self._read_bufsize = read_buffer_size
         self._write_bufsize = write_buffer_size
 
+        # These are cached once for all download threads. This saves calls to the apiserver.
         self._download_url, self._download_url_headers, self._download_url_expires = None, None, None
+
+        # This lock protects accesses to the above three variables, ensuring that they would
+        # be checked and changed atomically. This protects against thread race conditions.
+        self._url_download_mutex = Lock()
+
         self._request_iterator, self._response_iterator = None, None
         self._http_threadpool_futures = set()
 
@@ -549,15 +556,32 @@ class DXFile(DXDataObject):
             args["filename"] = filename
         if project is not None:
             args["project"] = project
-        if self._download_url is None or self._download_url_expires < time.time():
-            # logging.debug("Download URL unset or expired, requesting a new one")
-            if "timeout" not in kwargs:
-                kwargs["timeout"] = FILE_REQUEST_TIMEOUT
-            resp = dxpy.api.file_download(self._dxid, args, **kwargs)
-            self._download_url = resp["url"]
-            self._download_url_headers = resp.get("headers", {})
-            self._download_url_expires = time.time() + duration - 60 # Try to account for drift
-        return self._download_url, self._download_url_headers
+
+        with self._url_download_mutex:
+            if self._download_url is None or self._download_url_expires < time.time():
+                # The idea here is to cache a download URL for the entire file, that will
+                # be good for a few minutes. This avoids each thread having to ask the
+                # server for a URL, increasing server load.
+                #
+                # To avoid thread race conditions, this check/update procedure is protected
+                # with a lock.
+
+                # logging.debug("Download URL unset or expired, requesting a new one")
+                if "timeout" not in kwargs:
+                    kwargs["timeout"] = FILE_REQUEST_TIMEOUT
+                resp = dxpy.api.file_download(self._dxid, args, **kwargs)
+                self._download_url = resp["url"]
+                self._download_url_headers = resp.get("headers", {})
+                self._download_url_expires = time.time() + duration - 60   # Try to account for drift
+
+            # Make a copy, ensuring each thread has its own mutable
+            # version of the headers.  Note: python strings are
+            # immutable, so we can safely give a reference to the
+            # download url.
+            retval_download_url = self._download_url
+            retval_download_url_headers = copy.copy(self._download_url_headers)
+
+        return retval_download_url, retval_download_url_headers
 
     def _generate_read_requests(self, start_pos=0, end_pos=None, project=None, **kwargs):
         # project=None means no hint is to be supplied to the apiserver. It is
@@ -586,7 +610,6 @@ class DXFile(DXDataObject):
 
         for chunk_start_pos, chunk_end_pos in chunk_ranges(start_pos, end_pos):
             url, headers = self.get_download_url(project=project, **kwargs)
-            headers = copy.copy(headers)
             headers['Range'] = "bytes=" + str(chunk_start_pos) + "-" + str(chunk_end_pos)
             yield dxpy.DXHTTPRequest, [url, ''], {'method': 'GET',
                                                   'headers': headers,
@@ -646,19 +669,6 @@ class DXFile(DXDataObject):
                 raise DXFileError("Cannot read from file until it is in the closed state")
             self._file_length = int(desc["size"])
 
-        # If running on a worker, wait for the first file download chunk
-        # to come back before issuing any more requests. This ensures
-        # that all subsequent requests can take advantage of caching,
-        # rather than having all of the first DXFILE_HTTP_THREADS
-        # requests simultaneously hit a cold cache. Enforce a minimum
-        # size for this heuristic so we don't incur the overhead for
-        # tiny files (which wouldn't contribute as much to the load
-        # anyway).
-        if self._file_length > 128 * 1024 and self._pos == 0 and dxpy.JOB_ID:
-            get_first_chunk_sequentially = True
-        else:
-            get_first_chunk_sequentially = False
-
         if self._pos == self._file_length:
             return b""
 
@@ -702,18 +712,7 @@ class DXFile(DXDataObject):
                     self._request_iterator = self._generate_read_requests(
                         start_pos=self._pos, project=project, **kwargs)
 
-                if get_first_chunk_sequentially:
-                    # Make the first chunk request without using the
-                    # usual thread pool and block until it completes. On
-                    # the second chunk, we'll call
-                    # _next_response_content in the alternative block
-                    # below. This starts the threadpool going for the
-                    # second and all subsequent chunks.
-                    _callable, _args, _kwargs = next(self._request_iterator)
-                    content = _callable(*_args, **_kwargs)
-                    get_first_chunk_sequentially = False
-                else:
-                    content = self._next_response_content()
+                content = self._next_response_content()
 
                 if len(content) < remaining_len:
                     buf.write(content)
