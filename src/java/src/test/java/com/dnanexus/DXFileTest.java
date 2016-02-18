@@ -338,32 +338,34 @@ public class DXFileTest {
     }
 
     @Test
-    public void testDownloadChunks() {
-        // Upload 5mb
-        byte[] uploadBytes = new byte[5 * 1024 * 1024];
+    public void testDownloadByParts() {
+        // Upload 12mb
+        byte[] uploadBytes = new byte[12 * 1024 * 1024];
         new Random().nextBytes(uploadBytes);
 
         DXFile f = DXFile.newFile().setProject(testProject).build();
         f.upload(uploadBytes);
         f.closeAndWait();
-        byte[] downloadBytes = f.downloadChunks();
+        byte[] downloadBytes = f.downloadByParts();
 
         Assert.assertArrayEquals(uploadBytes, downloadBytes);
     }
 
     @Test
-    public void testUploadDownloadChunks() {
-        // Upload 5mb
-        byte[] uploadBytes = new byte[5 * 1024 * 1024];
+    public void testUploadDownloadByParts() {
+        // Upload 12mb
+        byte[] uploadBytes = new byte[12 * 1024 * 1024];
         new Random().nextBytes(uploadBytes);
 
         DXFile f = DXFile.newFile().setProject(testProject).build();
-        f.uploadChunks(uploadBytes);
-        System.out.println("finished upload");
+        f.uploadByParts(uploadBytes);
         f.closeAndWait();
-        System.out.println("Do we ever get here");
-        byte[] downloadBytes = f.downloadChunks();
+        byte[] downloadBytes = f.downloadBytes();
 
+        Assert.assertArrayEquals(uploadBytes, downloadBytes);
+
+        // download same bytes by parts
+        downloadBytes = f.downloadByParts();
         Assert.assertArrayEquals(uploadBytes, downloadBytes);
     }
 }

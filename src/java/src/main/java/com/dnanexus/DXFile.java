@@ -2,17 +2,17 @@
 //
 // This file is part of dx-toolkit (DNAnexus platform client libraries).
 //
-//   Licensed under the Apache License, Version 2.0 (the "License"); you may
-//   not use this file except in compliance with the License. You may obtain a
-//   copy of the License at
+// Licensed under the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License. You may obtain a
+// copy of the License at
 //
-//       http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
-//   Unless required by applicable law or agreed to in writing, software
-//   distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
-//   WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
-//   License for the specific language governing permissions and limitations
-//   under the License.
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations
+// under the License.
 
 package com.dnanexus;
 
@@ -213,10 +213,18 @@ public class DXFile extends DXDataObject {
         private String md5;
         @JsonProperty
         private int size;
+        @JsonProperty
+        private int index = 1;
 
         private FileUploadRequest(int size, String md5) {
             this.size = size;
             this.md5 = md5;
+        }
+
+        private FileUploadRequest(int size, String md5, int index) {
+            this.size = size;
+            this.md5 = md5;
+            this.index = index;
         }
     }
 
@@ -277,8 +285,8 @@ public class DXFile extends DXDataObject {
      *
      * @throws NullPointerException If any argument is null
      */
-    static DXFile getInstanceWithCachedDescribe(String fileId, DXContainer project,
-            DXEnvironment env, JsonNode describe) {
+    static DXFile getInstanceWithCachedDescribe(String fileId, DXContainer project, DXEnvironment env,
+            JsonNode describe) {
         return new DXFile(fileId, project, Preconditions.checkNotNull(env, "env may not be null"),
                 Preconditions.checkNotNull(describe, "describe may not be null"));
     }
@@ -289,10 +297,8 @@ public class DXFile extends DXDataObject {
      *
      * @throws NullPointerException If {@code fileId} or {@code container} is null
      */
-    public static DXFile getInstanceWithEnvironment(String fileId, DXContainer project,
-            DXEnvironment env) {
-        return new DXFile(fileId, project, Preconditions.checkNotNull(env, "env may not be null"),
-                null);
+    public static DXFile getInstanceWithEnvironment(String fileId, DXContainer project, DXEnvironment env) {
+        return new DXFile(fileId, project, Preconditions.checkNotNull(env, "env may not be null"), null);
     }
 
     /**
@@ -324,6 +330,20 @@ public class DXFile extends DXDataObject {
         return new Builder(env);
     }
 
+    // Size of the uploaded file, or the end of a range of bytes to be downloaded
+    public int fileEnd;
+
+    // Size of the part to be uploaded/downloaded
+    public int chunkSize = 5 * 1024 * 1024;
+
+    // Start of the byte array containing the file contents to be uploaded/downloaded
+    public int fileStart = 0;
+
+    // Ramp up factor for downloading by parts
+    public int ramp = 2;
+
+    public int numRequestsBetweenRamp = 4;
+
     private DXFile(String fileId, DXContainer project, DXEnvironment env, JsonNode describe) {
         super(fileId, "file", project, env, describe);
     }
@@ -344,17 +364,15 @@ public class DXFile extends DXDataObject {
         return this;
     }
 
+
     @Override
     public Describe describe() {
-        return DXJSON.safeTreeToValue(apiCallOnObject("describe", RetryStrategy.SAFE_TO_RETRY),
-                Describe.class);
+        return DXJSON.safeTreeToValue(apiCallOnObject("describe", RetryStrategy.SAFE_TO_RETRY), Describe.class);
     }
-
     @Override
     public Describe describe(DescribeOptions options) {
         return DXJSON.safeTreeToValue(
-                apiCallOnObject("describe", MAPPER.valueToTree(options),
-                        RetryStrategy.SAFE_TO_RETRY), Describe.class);
+                apiCallOnObject("describe", MAPPER.valueToTree(options), RetryStrategy.SAFE_TO_RETRY), Describe.class);
     }
 
     /**
@@ -390,7 +408,6 @@ public class DXFile extends DXDataObject {
 
         return data;
     }
-
     /**
      * Downloads the file and returns a stream of its contents. <b>This implementation buffers the
      * contents of the file in-memory before the contents are written into the stream; therefore,
@@ -416,8 +433,80 @@ public class DXFile extends DXDataObject {
         return DXJSON.safeTreeToValue(this.cachedDescribe, Describe.class);
     }
 
-    // Stores the size of the uploaded file
-    public int fileSize;
+    /**
+     * HTTP GET request to download part of the file.
+     *
+     * @param url URL to which an HTTP GET request is made to download the file
+     * @param chunkStart beginning of the part (in the byte array containing the file contents) to
+     *        be downloaded
+     * @param chunkEnd end of the part (in the byte array containing the file contents) to be
+     *        downloaded
+     *
+     * @return byte array containing the part of the file contents that is downloaded
+     */
+    private byte[] partDownloadRequest(String url, int chunkStart, int chunkEnd) {
+        HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
+        InputStream content = null;
+        byte[] data;
+
+        // HTTP GET request with bytes/_ge range header
+        HttpGet request = new HttpGet(url);
+        request.addHeader("Range", "bytes=" + chunkStart + "-" + chunkEnd);
+        HttpResponse response;
+        try {
+            response = httpclient.execute(request);
+            content = response.getEntity().getContent();
+            data = IOUtils.toByteArray(content);
+            content.close();
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        return data;
+    }
+
+    /**
+     * Downloads the file and returns a byte array of its contents. <b>This implementation downloads
+     * the contents of the file in parts.</b>
+     *
+     * @return byte array containing file contents
+     */
+    public byte[] downloadByParts() {
+        // API call returns URL and headers for HTTP GET requests
+        JsonNode output = apiCallOnObject("download", MAPPER.valueToTree(new FileDownloadRequest(true)),
+                RetryStrategy.SAFE_TO_RETRY);
+
+        ByteBuffer buffer = ByteBuffer.allocate(this.fileEnd - this.fileStart);
+        FileDownloadResponse apiResponse;
+        try {
+            apiResponse = MAPPER.treeToValue(output, FileDownloadResponse.class);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
+
+        int chunkSize = this.chunkSize;
+        int chunkStart = this.fileStart;
+        int chunkEnd;
+
+        int request = 1;
+        while (chunkStart < this.fileEnd) {
+            // chunk size ramp up
+            if (request > numRequestsBetweenRamp) {
+                request = 1;
+                chunkSize = chunkSize * ramp;
+            }
+
+            chunkEnd = Math.min(chunkStart + chunkSize, this.fileEnd);
+
+            byte[] chunk = partDownloadRequest(apiResponse.url, chunkStart, chunkEnd);
+            buffer.put(chunk, 0, chunk.length);
+
+            chunkStart = chunkEnd + 1;
+            request++;
+        }
+
+        return buffer.array();
+    }
 
     /**
      * Uploads data from the specified byte array to the file. <b>This implementation buffers the
@@ -434,7 +523,7 @@ public class DXFile extends DXDataObject {
     public void upload(byte[] data) {
         Preconditions.checkNotNull(data, "data may not be null");
 
-        fileSize = data.length;
+        this.fileEnd = data.length;
 
         // MD5 digest as 32 character hex string
         String dataMD5 = DigestUtils.md5Hex(data);
@@ -485,8 +574,8 @@ public class DXFile extends DXDataObject {
     }
 
     /**
-     * Uploads data from the specified stream to the file. <b>This implementation buffers the
-     * data in-memory before being uploaded to the server; therefore, the data must be small.</b>
+     * Uploads data from the specified stream to the file. <b>This implementation buffers the data
+     * in-memory before being uploaded to the server; therefore, the data must be small.</b>
      *
      * <p>
      * The file must be in the "open" state. This method assumes exclusive access to the file: the
@@ -505,74 +594,20 @@ public class DXFile extends DXDataObject {
         }
     }
 
-    public int chunkStart = 0;
-    public int chunkEnd;
-    public int chunkSize = 1024 * 64;
-    public int ramp = 2;
-    public int numRequestsBetweenRamp = 4;
-
-    private byte[] chunkRequest(String url, int chunkStart, int chunkEnd) {
-        HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
-        InputStream content = null;
-        byte[] data;
-
-        // HTTP GET request with bytes/_ge range header
-        HttpGet request = new HttpGet(url);
-        request.addHeader("Range", "bytes=" + chunkStart + "-" + chunkEnd);
-        HttpResponse response;
-        try {
-            response = httpclient.execute(request);
-            content = response.getEntity().getContent();
-            data = IOUtils.toByteArray(content);
-            content.close();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-
-        return data;
-    }
-
-    public byte[] downloadChunks() {
-        // API call returns URL and headers for HTTP GET requests
-        JsonNode output = apiCallOnObject("download", MAPPER.valueToTree(new FileDownloadRequest(true)),
-                RetryStrategy.SAFE_TO_RETRY);
-
-        ByteBuffer buffer = ByteBuffer.allocate(fileSize);
-        FileDownloadResponse apiResponse;
-        try {
-            apiResponse = MAPPER.treeToValue(output, FileDownloadResponse.class);
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException(e);
-        }
-
-        int request = 1;
-        while (chunkStart < fileSize) {
-            if (request > numRequestsBetweenRamp) {
-                request = 1;
-                chunkSize = chunkSize * ramp;
-            }
-            chunkEnd = Math.min(chunkStart + chunkSize, fileSize);
-            //System.out.println(chunkStart + "|" + chunkEnd + "|" + chunkSize + "|" + fileSize); //DEBUG
-            byte[] chunk = chunkRequest(apiResponse.url, chunkStart, chunkEnd);
-            buffer.put(chunk, 0, chunk.length);
-            chunkStart = chunkStart + chunkSize + 1;
-            request++;
-        }
-
-        return buffer.array();
-    }
-
-    public void uploadChunks(byte[] data) {
-        Preconditions.checkNotNull(data, "data may not be null");
-
-        fileSize = data.length;
-
+    /**
+     * HTTP PUT request to upload the data part to the server.
+     *
+     * @param dataChunk data part that is uploaded
+     * @param index position for which the data lies in the file
+     */
+    private void partUploadRequest(byte[] dataChunk, int index) {
         // MD5 digest as 32 character hex string
-        String dataMD5 = DigestUtils.md5Hex(data);
+        String dataMD5 = DigestUtils.md5Hex(dataChunk);
 
         // API call returns URL and headers
-        JsonNode output = apiCallOnObject("upload", MAPPER.valueToTree(new FileUploadRequest(data.length, dataMD5)),
-                RetryStrategy.SAFE_TO_RETRY);
+        JsonNode output =
+                apiCallOnObject("upload", MAPPER.valueToTree(new FileUploadRequest(dataChunk.length, dataMD5, index)),
+                        RetryStrategy.SAFE_TO_RETRY);
 
         FileUploadResponse apiResponse;
         try {
@@ -585,53 +620,63 @@ public class DXFile extends DXDataObject {
         // as the length of the data
         if (apiResponse.headers.containsKey("content-length")) {
             int apiserverContentLength = Integer.parseInt(apiResponse.headers.get("content-length"));
-            if (apiserverContentLength != data.length) {
+            if (apiserverContentLength != dataChunk.length) {
                 throw new AssertionError(
                         "Content-length received by the apiserver did not match that of the input data");
             }
         }
 
-//      HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
-//      try {
-//          HttpResponse res = httpclient.execute(request);
-//          int statusCode = res.getStatusLine().getStatusCode();
-//          System.out.println("request made " + statusCode); // dEBUG
-//      } catch (IOException e1) {
-//          throw new RuntimeException(e1);
-//      }
-
         // HTTP PUT request to upload URL and headers
         HttpPut request = new HttpPut(apiResponse.url);
 
-         while (chunkStart < fileSize) {
-            for (Map.Entry<String, String> header : apiResponse.headers.entrySet()) {
-                String key = header.getKey();
+        // Set headers
+        for (Map.Entry<String, String> header : apiResponse.headers.entrySet()) {
+            String key = header.getKey();
 
-                // The request implicitly supplies the content length in the headers
-                // when executed
-                if (key.equals("content-length")) {
-                    continue;
-                }
-
-                request.setHeader(key, header.getValue());
+            // The request implicitly supplies the content length in the headers
+            // when executed
+            if (key.equals("content-length")) {
+                continue;
             }
 
-             chunkEnd = Math.min(chunkStart + chunkSize, fileSize);
-             ByteArrayEntity entity = new ByteArrayEntity(Arrays.copyOfRange(data, chunkStart, chunkEnd));
-             request.setEntity(entity);
-             request.addHeader("Connection", "Keep-Alive");
-             request.addHeader("Content-Range", "bytes=" + chunkStart + "-" + chunkEnd);
-             request.addHeader("Accept-Ranges", "bytes");
-             HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
-             try {
-                System.out.println(chunkStart + "|" + chunkEnd + "|" + chunkSize + "|" + fileSize); //DEBUG
-                HttpResponse res = httpclient.execute(request);
-                int statusCode = res.getStatusLine().getStatusCode();
-                System.out.println("request made " + statusCode); //dEBUG
-             } catch (IOException e) {
-                throw new RuntimeException(e);
-             }
-             chunkStart = chunkStart + chunkSize + 1;
-         }
+            request.setHeader(key, header.getValue());
+        }
+
+        // Set entity
+        request.setEntity(new ByteArrayEntity(dataChunk));
+        HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
+        try {
+            httpclient.execute(request);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Uploads data from the specified byte array to the file. <b>This implementation uploads the
+     * byte array in parts to the server.</b>
+     *
+     * <p>
+     * The file must be in the "open" state. This method assumes exclusive access to the file: the
+     * file must have no parts uploaded before this call is made, and no other clients may upload
+     * data to the same file concurrently.
+     * </p>
+     *
+     * @param data part of data in bytes to be uploaded
+     */
+    public void uploadByParts(byte[] data) {
+        Preconditions.checkNotNull(data, "data may not be null");
+
+        this.fileEnd = data.length;
+        int chunkStart = this.fileStart;
+        int chunkEnd;
+        int index = 1;
+
+        while (chunkStart < this.fileEnd) {
+            chunkEnd = Math.min(chunkStart + chunkSize, this.fileEnd);
+            partUploadRequest(Arrays.copyOfRange(data, chunkStart, chunkEnd), index);
+            chunkStart = chunkEnd;
+            index++;
+        }
     }
 }
