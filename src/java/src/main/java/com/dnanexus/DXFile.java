@@ -1,18 +1,18 @@
-// Copyright (C) 2013-2015 DNAnexus, Inc.
+// Copyright (C) 2013-2016 DNAnexus, Inc.
 //
 // This file is part of dx-toolkit (DNAnexus platform client libraries).
 //
-// Licensed under the Apache License, Version 2.0 (the "License"); you may
-// not use this file except in compliance with the License. You may obtain a
-// copy of the License at
+//   Licensed under the Apache License, Version 2.0 (the "License"); you may
+//   not use this file except in compliance with the License. You may obtain a
+//   copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//       http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
-// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
-// License for the specific language governing permissions and limitations
-// under the License.
+//   Unless required by applicable law or agreed to in writing, software
+//   distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+//   WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+//   License for the specific language governing permissions and limitations
+//   under the License.
 
 package com.dnanexus;
 
@@ -285,8 +285,8 @@ public class DXFile extends DXDataObject {
      *
      * @throws NullPointerException If any argument is null
      */
-    static DXFile getInstanceWithCachedDescribe(String fileId, DXContainer project, DXEnvironment env,
-            JsonNode describe) {
+    static DXFile getInstanceWithCachedDescribe(String fileId, DXContainer project,
+            DXEnvironment env, JsonNode describe) {
         return new DXFile(fileId, project, Preconditions.checkNotNull(env, "env may not be null"),
                 Preconditions.checkNotNull(describe, "describe may not be null"));
     }
@@ -297,8 +297,10 @@ public class DXFile extends DXDataObject {
      *
      * @throws NullPointerException If {@code fileId} or {@code container} is null
      */
-    public static DXFile getInstanceWithEnvironment(String fileId, DXContainer project, DXEnvironment env) {
-        return new DXFile(fileId, project, Preconditions.checkNotNull(env, "env may not be null"), null);
+    public static DXFile getInstanceWithEnvironment(String fileId, DXContainer project,
+            DXEnvironment env) {
+        return new DXFile(fileId, project, Preconditions.checkNotNull(env, "env may not be null"),
+                null);
     }
 
     /**
@@ -364,15 +366,17 @@ public class DXFile extends DXDataObject {
         return this;
     }
 
-
     @Override
     public Describe describe() {
-        return DXJSON.safeTreeToValue(apiCallOnObject("describe", RetryStrategy.SAFE_TO_RETRY), Describe.class);
+        return DXJSON.safeTreeToValue(apiCallOnObject("describe", RetryStrategy.SAFE_TO_RETRY),
+                Describe.class);
     }
+
     @Override
     public Describe describe(DescribeOptions options) {
         return DXJSON.safeTreeToValue(
-                apiCallOnObject("describe", MAPPER.valueToTree(options), RetryStrategy.SAFE_TO_RETRY), Describe.class);
+                apiCallOnObject("describe", MAPPER.valueToTree(options),
+                        RetryStrategy.SAFE_TO_RETRY), Describe.class);
     }
 
     /**
@@ -408,6 +412,7 @@ public class DXFile extends DXDataObject {
 
         return data;
     }
+
     /**
      * Downloads the file and returns a stream of its contents. <b>This implementation buffers the
      * contents of the file in-memory before the contents are written into the stream; therefore,
@@ -574,8 +579,8 @@ public class DXFile extends DXDataObject {
     }
 
     /**
-     * Uploads data from the specified stream to the file. <b>This implementation buffers the data
-     * in-memory before being uploaded to the server; therefore, the data must be small.</b>
+     * Uploads data from the specified stream to the file. <b>This implementation buffers the
+     * data in-memory before being uploaded to the server; therefore, the data must be small.</b>
      *
      * <p>
      * The file must be in the "open" state. This method assumes exclusive access to the file: the
