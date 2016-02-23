@@ -21,8 +21,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.ByteBuffer;
-import java.util.Arrays;
 import java.util.Map;
 
 import org.apache.commons.codec.digest.DigestUtils;
@@ -44,7 +42,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
-import com.google.common.io.ByteStreams;
 
 /**
  * A file (an opaque sequence of bytes).
@@ -152,6 +149,8 @@ public class DXFile extends DXDataObject {
     public static class Describe extends DXDataObject.Describe {
         @JsonProperty
         private String media;
+        @JsonProperty
+        private int size;
 
         private Describe() {
             super();
@@ -166,6 +165,15 @@ public class DXFile extends DXDataObject {
             Preconditions.checkState(this.media != null,
                     "media type is not accessible because it was not retrieved with the describe call");
             return media;
+        }
+
+        /**
+         * Returns the size of the file.
+         *
+         * @return size of file
+         */
+        public int getFileSize(){
+            return size;
         }
     }
 
@@ -332,19 +340,21 @@ public class DXFile extends DXDataObject {
         return new Builder(env);
     }
 
-    // Size of the uploaded file, or the end of a range of bytes to be downloaded
-    public int fileEnd;
+    // Size of the part to be uploaded
+    public int uploadChunkSize = 16 * 1024 * 1024;
 
-    // Size of the part to be uploaded/downloaded
-    public int chunkSize = 5 * 1024 * 1024;
+    // Minimum size of the part to be downloaded
+    public final int minDownloadChunkSize = 64 * 1024;
 
-    // Start of the byte array containing the file contents to be uploaded/downloaded
-    public int fileStart = 0;
+    // Maximum size of the part to be downloaded
+    public final int maxDownloadChunkSize = 16 * 1024 * 1024;
+
+    // Number of bytes to return to outputStream for each call
+    public int numBytesToProcess = 5 * 1024 * 1024;
 
     // Ramp up factor for downloading by parts
-    public int ramp = 2;
-
-    public int numRequestsBetweenRamp = 4;
+    public final int ramp = 2;
+    public final int numRequestsBetweenRamp = 4;
 
     private DXFile(String fileId, DXContainer project, DXEnvironment env, JsonNode describe) {
         super(fileId, "file", project, env, describe);
@@ -380,56 +390,24 @@ public class DXFile extends DXDataObject {
     }
 
     /**
-     * Downloads the file and returns a byte array of its contents. <b>This implementation buffers
-     * the contents of the file in-memory; therefore, the file must be small.</b>
+     * Downloads the file and returns a byte array of its contents.
      *
      * @return byte array containing file contents
      */
     // TODO: set project ID containing the file to be downloaded
     public byte[] downloadBytes() {
-        // API call returns URL for HTTP GET requests
-        JsonNode output = apiCallOnObject("download", MAPPER.valueToTree(new FileDownloadRequest(true)),
-                RetryStrategy.SAFE_TO_RETRY);
-
-        FileDownloadResponse apiResponse;
-        HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
-        InputStream content = null;
-        byte[] data;
-
-        try {
-            apiResponse = MAPPER.treeToValue(output, FileDownloadResponse.class);
-
-            // HTTP GET request to download URL
-            HttpGet request = new HttpGet(apiResponse.url);
-            HttpResponse response = httpclient.execute(request);
-            content = response.getEntity().getContent();
-
-            data = IOUtils.toByteArray(content);
-            content.close();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-
-        return data;
+        ByteArrayOutputStream data = (ByteArrayOutputStream) downloadByParts(numBytesToProcess);
+        return data.toByteArray();
     }
 
     /**
-     * Downloads the file and returns a stream of its contents. <b>This implementation buffers the
-     * contents of the file in-memory before the contents are written into the stream; therefore,
-     * the file must be small enough to be buffered in memory.</b>
+     * Downloads the file and returns a stream of its contents.
      *
      * @return stream containing file contents
      */
     public OutputStream downloadStream() {
-        byte[] dataBytes = this.downloadBytes();
-        OutputStream data = new ByteArrayOutputStream(dataBytes.length);
-        try {
-            data.write(dataBytes, 0, dataBytes.length);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        return downloadByParts(numBytesToProcess);
 
-        return data;
     }
 
     @Override
@@ -449,7 +427,7 @@ public class DXFile extends DXDataObject {
      *
      * @return byte array containing the part of the file contents that is downloaded
      */
-    private byte[] partDownloadRequest(String url, int chunkStart, int chunkEnd) {
+    private static byte[] partDownloadRequest(String url, int chunkStart, int chunkEnd) {
         HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
         InputStream content = null;
         byte[] data;
@@ -461,27 +439,34 @@ public class DXFile extends DXDataObject {
         try {
             response = httpclient.execute(request);
             content = response.getEntity().getContent();
-            data = IOUtils.toByteArray(content);
-            content.close();
         } catch (IOException e) {
             throw new RuntimeException(e);
+        } finally {
+            try {
+                data = IOUtils.toByteArray(content);
+                content.close();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }
 
         return data;
     }
 
     /**
-     * Downloads the file and returns a byte array of its contents. <b>This implementation downloads
-     * the contents of the file in parts.</b>
+     *
+     * @param numBytes number of bytes to send to the output stream at each iteration
      *
      * @return byte array containing file contents
      */
-    public byte[] downloadByParts() {
+    private OutputStream downloadByParts(int numBytes) {
+        int fileSize = describe().getFileSize();
+
         // API call returns URL and headers for HTTP GET requests
         JsonNode output = apiCallOnObject("download", MAPPER.valueToTree(new FileDownloadRequest(true)),
                 RetryStrategy.SAFE_TO_RETRY);
 
-        ByteBuffer buffer = ByteBuffer.allocate(this.fileEnd - this.fileStart);
+        OutputStream fileContentsBuffer = new ByteArrayOutputStream();
         FileDownloadResponse apiResponse;
         try {
             apiResponse = MAPPER.treeToValue(output, FileDownloadResponse.class);
@@ -489,114 +474,60 @@ public class DXFile extends DXDataObject {
             throw new RuntimeException(e);
         }
 
-        int chunkSize = this.chunkSize;
-        int chunkStart = this.fileStart;
-        int chunkEnd;
+        int chunkStart = 0;
+        int chunkSize = minDownloadChunkSize;
+        int chunkEnd = Math.min(chunkSize, fileSize);
+        InputStream downloadBuffer = new ByteArrayInputStream(new byte[0]);
 
         int request = 1;
-        while (chunkStart < this.fileEnd) {
+        while (chunkStart < fileSize) {
             // chunk size ramp up
-            if (request > numRequestsBetweenRamp) {
-                request = 1;
-                chunkSize = chunkSize * ramp;
+            if (chunkSize < maxDownloadChunkSize) {
+                if (request > numRequestsBetweenRamp) {
+                    request = 1;
+                    chunkSize = chunkSize * ramp;
+                }
+                request++;
             }
 
-            chunkEnd = Math.min(chunkStart + chunkSize, this.fileEnd);
+            try {
+                ByteArrayOutputStream chunkAsOutputStream = new ByteArrayOutputStream();
+                IOUtils.copy(downloadBuffer, chunkAsOutputStream);
 
-            byte[] chunk = partDownloadRequest(apiResponse.url, chunkStart, chunkEnd);
-            buffer.put(chunk, 0, chunk.length);
+                // API requests to download chunks
+                while (chunkStart < fileSize && chunkAsOutputStream.size() < numBytes) {
+                    chunkEnd = Math.min(chunkStart + chunkSize - 1, fileSize);
+                    byte[] downloadPart = partDownloadRequest(apiResponse.url, chunkStart, chunkEnd);
+                    chunkAsOutputStream.write(downloadPart);
+                    chunkStart = chunkEnd + 1;
+                }
 
-            chunkStart = chunkEnd + 1;
-            request++;
+                downloadBuffer = new ByteArrayInputStream(chunkAsOutputStream.toByteArray());
+
+                // Write remaining bytes to output stream
+                if (chunkEnd == fileSize) {
+                    byte[] bytesRead = new byte[downloadBuffer.available()];
+                    downloadBuffer.read(bytesRead);
+                    fileContentsBuffer.write(bytesRead);
+                }
+
+                // Parts to propagate to output stream based on requested part size
+                while (downloadBuffer.available() >= numBytes) {
+                    byte[] bytesRead = new byte[numBytes];
+                    downloadBuffer.read(bytesRead, 0, numBytes);
+                    fileContentsBuffer.write(bytesRead);
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }
-
-        return buffer.array();
-    }
-
-    /**
-     * Uploads data from the specified byte array to the file. <b>This implementation buffers the
-     * data in-memory before being uploaded to the server; therefore, the data must be small.</b>
-     *
-     * <p>
-     * The file must be in the "open" state. This method assumes exclusive access to the file: the
-     * file must have no parts uploaded before this call is made, and no other clients may upload
-     * data to the same file concurrently.
-     * </p>
-     *
-     * @param data data in bytes to be uploaded
-     */
-    public void upload(byte[] data) {
-        Preconditions.checkNotNull(data, "data may not be null");
-
-        this.fileEnd = data.length;
-
-        // MD5 digest as 32 character hex string
-        String dataMD5 = DigestUtils.md5Hex(data);
-
-        // API call returns URL and headers
-        JsonNode output = apiCallOnObject("upload", MAPPER.valueToTree(new FileUploadRequest(data.length, dataMD5)),
-                RetryStrategy.SAFE_TO_RETRY);
-
-        FileUploadResponse apiResponse;
         try {
-            apiResponse = MAPPER.treeToValue(output, FileUploadResponse.class);
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException(e);
-        }
-
-        // Check that the content-length received by the apiserver is the same
-        // as the length of the data
-        if (apiResponse.headers.containsKey("content-length")) {
-            int apiserverContentLength = Integer.parseInt(apiResponse.headers.get("content-length"));
-            if (apiserverContentLength != data.length) {
-                throw new AssertionError(
-                        "Content-length received by the apiserver did not match that of the input data");
-            }
-        }
-
-        // HTTP PUT request to upload URL and headers
-        HttpPut request = new HttpPut(apiResponse.url);
-        request.setEntity(new ByteArrayEntity(data));
-
-        for (Map.Entry<String, String> header : apiResponse.headers.entrySet()) {
-            String key = header.getKey();
-
-            // The request implicitly supplies the content length in the headers
-            // when executed
-            if (key.equals("content-length")) {
-                continue;
-            }
-
-            request.setHeader(key, header.getValue());
-        }
-
-        HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
-        try {
-            httpclient.execute(request);
+            downloadBuffer.close();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
-    }
 
-    /**
-     * Uploads data from the specified stream to the file. <b>This implementation buffers the
-     * data in-memory before being uploaded to the server; therefore, the data must be small.</b>
-     *
-     * <p>
-     * The file must be in the "open" state. This method assumes exclusive access to the file: the
-     * file must have no parts uploaded before this call is made, and no other clients may upload
-     * data to the same file concurrently.
-     * </p>
-     *
-     * @param data stream containing data to be uploaded
-     */
-    public void upload(InputStream data) {
-        Preconditions.checkNotNull(data, "data may not be null");
-        try {
-            this.upload(ByteStreams.toByteArray(data));
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        return fileContentsBuffer;
     }
 
     /**
@@ -658,8 +589,7 @@ public class DXFile extends DXDataObject {
     }
 
     /**
-     * Uploads data from the specified byte array to the file. <b>This implementation uploads the
-     * byte array in parts to the server.</b>
+     * Uploads data from the specified byte array to the file.
      *
      * <p>
      * The file must be in the "open" state. This method assumes exclusive access to the file: the
@@ -669,19 +599,64 @@ public class DXFile extends DXDataObject {
      *
      * @param data part of data in bytes to be uploaded
      */
-    public void uploadByParts(byte[] data) {
+    public void upload(InputStream data) {
         Preconditions.checkNotNull(data, "data may not be null");
 
-        this.fileEnd = data.length;
-        int chunkStart = this.fileStart;
-        int chunkEnd;
-        int index = 1;
+        InputStream uploadBuffer = new ByteArrayInputStream(new byte[0]);
+        int numBytes = numBytesToProcess;
 
-        while (chunkStart < this.fileEnd) {
-            chunkEnd = Math.min(chunkStart + chunkSize, this.fileEnd);
-            partUploadRequest(Arrays.copyOfRange(data, chunkStart, chunkEnd), index);
-            chunkStart = chunkEnd;
-            index++;
+        int index = 1;
+        try {
+            while (data.available() > 0) {
+                // Bytes of uploadChunkSize to be buffered in output stream
+                ByteArrayOutputStream chunk = new ByteArrayOutputStream();
+
+                // Bytes from buffer left over are copied over to the output stream
+                IOUtils.copy(uploadBuffer, chunk);
+
+                // Buffer bytes in chunks. Number of bytes in buffer should be at least numBytes.
+                while (chunk.size() < numBytes && data.available() > 0) {
+                    byte[] temp = new byte[Math.min(uploadChunkSize, data.available())];
+                    data.read(temp, 0, Math.min(uploadChunkSize, data.available()));
+                    chunk.write(temp);
+                }
+
+                // Need to convert buffer to input stream so it can be read
+                uploadBuffer = new ByteArrayInputStream(chunk.toByteArray());
+
+                // Upload bytes from buffer
+                while (uploadBuffer.available() >= numBytes) {
+                    byte[] uploadPart = new byte[numBytes];
+                    uploadBuffer.read(uploadPart, 0, numBytes);
+                    partUploadRequest(uploadPart, index);
+                    index++;
+                }
+
+                // Uploads last few bytes from buffer when there is no more data to be read
+                if (uploadBuffer.available() < numBytes && data.available() == 0) {
+                    byte[] uploadPart = IOUtils.toByteArray(uploadBuffer);
+                    partUploadRequest(uploadPart, index);
+                }
+            }
+        } catch (IOException e) {
+            throw new RuntimeException();
         }
+    }
+
+    /**
+     * Uploads data from the specified byte array to the file.
+     *
+     * <p>
+     * The file must be in the "open" state. This method assumes exclusive access to the file: the
+     * file must have no parts uploaded before this call is made, and no other clients may upload
+     * data to the same file concurrently.
+     * </p>
+     *
+     * @param data data in bytes to be uploaded
+     */
+    public void upload(byte[] data) {
+        Preconditions.checkNotNull(data, "data may not be null");
+
+        upload(new ByteArrayInputStream(data));
     }
 }
