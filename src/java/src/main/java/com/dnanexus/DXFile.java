@@ -454,10 +454,11 @@ public class DXFile extends DXDataObject {
     }
 
     /**
+     * Downloads contents of file in chunks and sends them to an output stream.
      *
      * @param numBytes number of bytes to send to the output stream at each iteration
      *
-     * @return byte array containing file contents
+     * @return output stream containing file contents
      */
     private OutputStream downloadByParts(int numBytes) {
         int fileSize = describe().getFileSize();
