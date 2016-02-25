@@ -17,7 +17,6 @@
 package com.dnanexus;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Random;
@@ -33,7 +32,6 @@ import org.junit.rules.ExpectedException;
 import com.dnanexus.DXDataObject.DescribeOptions;
 import com.dnanexus.DXFile.Builder;
 import com.dnanexus.DXFile.Describe;
-import com.dnanexus.exceptions.DXAPIException;
 import com.dnanexus.exceptions.InvalidStateException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
@@ -222,41 +220,27 @@ public class DXFileTest {
     }
 
     @Test
-    public void testUploadDownloadEmptyFails() {
+    public void testUploadDownloadEmpty() throws IOException {
         // Upload bytes, download bytes
         byte[] uploadBytes = new byte[0];
 
         DXFile f = DXFile.newFile().setProject(testProject).build();
-        try {
-            f.upload(uploadBytes);
-        } catch (DXAPIException e) {
-            // Expected
-        }
+        f.upload(uploadBytes);
+        f.closeAndWait();
+        byte[] downloadBytes = f.downloadBytes();
+
+        Assert.assertArrayEquals(uploadBytes, downloadBytes);
 
         // Upload stream, download stream
         InputStream uploadStream = new ByteArrayInputStream(uploadBytes);
+
         f = DXFile.newFile().setProject(testProject).build();
-        try {
-            f.upload(uploadStream);
-        } catch (DXAPIException e) {
-            // Expected
-        }
+        f.upload(uploadStream);
+        f.closeAndWait();
 
-        // Upload bytes with builder
-        uploadBytes = new byte[0];
-        try {
-            f = DXFile.newFile().setProject(testProject).upload(uploadBytes).build().closeAndWait();
-        } catch (DXAPIException e) {
-            // Expected
-        }
+        byte[] bytesFromDownloadStream = IOUtils.toByteArray(f.downloadStream());
 
-        // Upload stream with builder
-        uploadStream = new ByteArrayInputStream(uploadBytes);
-        try {
-            f = DXFile.newFile().setProject(testProject).upload(uploadStream).build().closeAndWait();
-        } catch (DXAPIException e) {
-            // Expected
-        }
+        Assert.assertArrayEquals(uploadBytes, bytesFromDownloadStream);
     }
 
     @Test
@@ -288,7 +272,7 @@ public class DXFileTest {
     }
 
     @Test
-    public void testUploadStreamDownloadStream() {
+    public void testUploadStreamDownloadStream() throws IOException {
         // With string data
         String uploadData = "Test";
         InputStream uploadStream = IOUtils.toInputStream(uploadData);
@@ -296,14 +280,12 @@ public class DXFileTest {
         DXFile f = DXFile.newFile().setProject(testProject).build();
         f.upload(uploadStream);
         f.closeAndWait();
-        ByteArrayOutputStream baos = (ByteArrayOutputStream) f.downloadStream();
-        byte[] bytesFromDownloadStream = baos.toByteArray();
+        byte[] bytesFromDownloadStream = IOUtils.toByteArray(f.downloadStream());
 
         Assert.assertArrayEquals(uploadData.getBytes(), bytesFromDownloadStream);
 
         // Download again
-        baos = (ByteArrayOutputStream) f.downloadStream();
-        bytesFromDownloadStream = baos.toByteArray();
+        bytesFromDownloadStream = IOUtils.toByteArray(f.downloadStream());
         Assert.assertArrayEquals(uploadData.getBytes(), bytesFromDownloadStream);
     }
 

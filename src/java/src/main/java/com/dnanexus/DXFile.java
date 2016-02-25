@@ -17,10 +17,8 @@
 package com.dnanexus;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.Map;
 
 import org.apache.commons.codec.digest.DigestUtils;
@@ -150,7 +148,7 @@ public class DXFile extends DXDataObject {
         @JsonProperty
         private String media;
         @JsonProperty
-        private int size;
+        private long size;
 
         private Describe() {
             super();
@@ -172,7 +170,7 @@ public class DXFile extends DXDataObject {
          *
          * @return size of file
          */
-        public int getFileSize(){
+        public long getFileSize(){
             return size;
         }
     }
@@ -396,8 +394,10 @@ public class DXFile extends DXDataObject {
      */
     // TODO: set project ID containing the file to be downloaded
     public byte[] downloadBytes() {
-        ByteArrayOutputStream data = (ByteArrayOutputStream) downloadByParts(numBytesToProcess);
-        return data.toByteArray();
+        // TODO: fix this
+//        ByteArrayOutputStream data = (ByteArrayOutputStream) downloadByParts(numBytesToProcess);
+//        return data.toByteArray();
+        return null;
     }
 
     /**
@@ -405,9 +405,8 @@ public class DXFile extends DXDataObject {
      *
      * @return stream containing file contents
      */
-    public OutputStream downloadStream() {
+    public InputStream downloadStream() {
         return downloadByParts(numBytesToProcess);
-
     }
 
     @Override
@@ -453,6 +452,52 @@ public class DXFile extends DXDataObject {
         return data;
     }
 
+    private class FileApiInputStream extends InputStream {
+
+        private final long readStart;
+        private final long readEnd;
+
+        private long nextByteFromApi;
+        private InputStream unreadBytes;
+
+        private FileApiInputStream(long readStart, long readEnd) {
+            this.readStart = readStart;
+            this.readEnd = readEnd;
+            this.nextByteFromApi = readStart;
+
+            OutputStream fileContentsBuffer = new ByteArrayOutputStream();
+            FileDownloadResponse apiResponse;
+            try {
+                apiResponse = MAPPER.treeToValue(output, FileDownloadResponse.class);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        @Override
+        public int read() throws IOException {
+            // TODO: implement this in terms of read(byte[])
+        }
+
+        @Override
+        public int read(byte[] b) throws IOException {
+            if (unreadBytes == null || unreadBytes.available() == 0) {
+                long startRange = nextByteFromApi;
+                long endRange = Math.min(startRange + maxDownloadChunkSize - 1, readEnd - 1); // Inclusive
+
+                byte[] downloadPart = partDownloadRequest(apiResponse.url, chunkStart, chunkEnd);
+            }
+            // TODO: determine if we're at EOF
+            assert(unreadBytes != null && unreadBytes.available() > 0);
+            return unreadBytes.read(b);
+        }
+
+    }
+
+    private InputStream downloadByParts(int numBytes) {
+        return new FileApiInputStream(0, describe().getFileSize());
+    }
+
     /**
      * Downloads contents of file in chunks and sends them to an output stream.
      *
@@ -460,20 +505,12 @@ public class DXFile extends DXDataObject {
      *
      * @return output stream containing file contents
      */
-    private OutputStream downloadByParts(int numBytes) {
+    private OutputStream downloadByParts2(int numBytes) {
         int fileSize = describe().getFileSize();
 
         // API call returns URL and headers for HTTP GET requests
         JsonNode output = apiCallOnObject("download", MAPPER.valueToTree(new FileDownloadRequest(true)),
                 RetryStrategy.SAFE_TO_RETRY);
-
-        OutputStream fileContentsBuffer = new ByteArrayOutputStream();
-        FileDownloadResponse apiResponse;
-        try {
-            apiResponse = MAPPER.treeToValue(output, FileDownloadResponse.class);
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException(e);
-        }
 
         int chunkStart = 0;
         int chunkSize = minDownloadChunkSize;
