@@ -25,6 +25,12 @@
 #include <boost/version.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 
+#ifdef WINDOWS_BUILD
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "dxcpp/dxcpp.h"
 #include "dxcpp/bqueue.h"
 #include "api_helper.h"
@@ -137,9 +143,38 @@ void handle_bad_alloc(const std::bad_alloc &e) {
 //
 // Memory footprint = [#read-threads + 2 * (#compress-threads + #upload-threads)] * chunk-size
 
+size_t getAvailableSystemMemory()
+{
+#ifdef WINDOWS_BUILD
+  MEMORYSTATUSEX status;
+  status.dwLength = sizeof(status);
+  GlobalMemoryStatusEx(&status);
+  return status.ullTotalPhys;
+#else
+  long pages = sysconf(_SC_AVPHYS_PAGES);
+  long page_size = sysconf(_SC_PAGE_SIZE);
+  return pages * page_size;
+#endif
+}
+
+bool checkMemory() {
+  // The lowest amount of free memory before delaying the read threads
+  static long freeMemoryLimit = 10*1024*1024; // 10 MB
+  if (getAvailableSystemMemory() < freeMemoryLimit) {
+    return false;
+  }
+  return true;
+}
+
 void readChunks() {
   try {
     while (true) {
+      // If the upload  is using a lot of memory delay the read thread for a bit.
+      if (!checkMemory()) {
+	DXLOG(logINFO) << "Less than 10MB of memory available. Delaying read thread.";
+	boost::this_thread::sleep(boost::posix_time::seconds(2));
+	continue;
+      }
       Chunk * c = chunksToRead.consume();
 
       c->log("Reading...");
