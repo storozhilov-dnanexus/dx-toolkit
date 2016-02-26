@@ -4173,6 +4173,7 @@ class TestDXClientFindInOrg(DXTestCase):
                      "describe": dxpy.api.project_describe(self.project_ppb)}]
         self.assertEqual(output, expected)
 
+
     def test_dx_find_org_projects_phi(self):
         with temporary_project() as project_1:
             project1_id = project_1.get_id()
@@ -4185,6 +4186,24 @@ class TestDXClientFindInOrg(DXTestCase):
 
             self.assertTrue(len(res) == 1, "Expected to find one project")
             self.assertEqual(res[0], project1_id)
+
+
+    def test_dx_find_org_apps(self):
+        org_members = [self.user_alice, self.user_bob]  # sorted ascending by user ID
+        org_members.sort()
+
+        # Basic test to check consistency of client output to directly invoking API
+        output = run("dx find org apps org-piratelabs --brief").strip().split("\n")
+        dx_api_output = dxpy.api.org_find_apps(self.org_id)
+        self.assertEqual(output, [member['id'] for member in dx_api_output['results']])
+        self.assertEqual(output, org_members)
+
+        # With --level flag
+        output = run("dx find org apps org-piratelabs --level {l} --brief".format(l="ADMIN")).strip().split("\n")
+        self.assertItemsEqual(output, [self.user_alice])
+
+        output = run("dx find org apps org-piratelabs --level {l} --brief".format(l="MEMBER")).strip().split("\n")
+        self.assertRaises(DXError)
 
 
 @unittest.skipUnless(testutil.TEST_ISOLATED_ENV, 'skipping tests that require org creation')

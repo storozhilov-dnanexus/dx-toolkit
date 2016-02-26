@@ -4596,6 +4596,26 @@ parser_find_org_projects.add_argument('--created-before', help='Date (e.g. 2012-
 parser_find_org_projects.set_defaults(func=org_find_projects)
 register_parser(parser_find_org_projects, subparsers_action=subparsers_find_org, categories=('data', 'org'))
 
+parser_find_org_apps = subparsers_find_org.add_parser(
+    'apps',
+    help='List apps billed to the specified org',
+    description=fill('Finds apps billed to the specified org subject to the given search parameters. You must '
+                     'be an ADMIN of the specified org to use this command. It allows you to identify projects billed '
+                     'to the org that have not been shared with you explicitly.'),
+    parents=[stdout_args, json_arg, delim_arg, env_args, find_by_properties_and_tags_args],
+    prog='dx find org apps'
+)
+parser_find_org_apps.add_argument('org_id', help='Org ID')
+parser_find_org_apps.add_argument('--name', help='Name of the projects')
+parser_find_org_apps.add_argument('--ids', nargs='+', help='Possible project IDs. May be specified like "--ids project-1 project-2"')
+find_org_apps_public = parser_find_org_apps.add_mutually_exclusive_group()
+find_org_apps_public.add_argument('--public-only', dest='public', help='Include only public projects', action='store_true', default=None)
+find_org_apps_public.add_argument('--private-only', dest='public', help='Include only private projects', action='store_false', default=None)
+parser_find_org_apps.add_argument('--created-after', help='Date (e.g. 2012-01-31) or integer timestamp after which the project was created (negative number means ms in the past, or use suffix s, m, h, d, w, M, y). Integer timestamps will be parsed as milliseconds since epoch.')
+parser_find_org_apps.add_argument('--created-before', help='Date (e.g. 2012-01-31) or integer timestamp before which the project was created (negative number means ms in the past, or use suffix s, m, h, d, w, M, y). Integer timestamps will be parsed as milliseconds since epoch.')
+parser_find_org_apps.set_defaults(func=org_find_projects)
+register_parser(parser_find_org_apps, subparsers_action=subparsers_find_org, categories=('data', 'org'))
+
 parser_find_orgs = subparsers_find.add_parser(
     "orgs",
     help=fill("List orgs"),
