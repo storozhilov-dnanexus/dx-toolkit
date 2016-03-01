@@ -17,8 +17,10 @@
 package com.dnanexus;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.Map;
 
 import org.apache.commons.codec.digest.DigestUtils;
@@ -170,7 +172,7 @@ public class DXFile extends DXDataObject {
          *
          * @return size of file
          */
-        public long getFileSize(){
+        public long getFileSize() {
             return size;
         }
     }
@@ -221,11 +223,6 @@ public class DXFile extends DXDataObject {
         private int size;
         @JsonProperty
         private int index = 1;
-
-        private FileUploadRequest(int size, String md5) {
-            this.size = size;
-            this.md5 = md5;
-        }
 
         private FileUploadRequest(int size, String md5, int index) {
             this.size = size;
@@ -339,7 +336,8 @@ public class DXFile extends DXDataObject {
     }
 
     // Size of the part to be uploaded
-    public int uploadChunkSize = 16 * 1024 * 1024;
+    @VisibleForTesting
+    int uploadChunkSize = 16 * 1024 * 1024;
 
     // Minimum size of the part to be downloaded
     public final int minDownloadChunkSize = 64 * 1024;
@@ -348,7 +346,7 @@ public class DXFile extends DXDataObject {
     public final int maxDownloadChunkSize = 16 * 1024 * 1024;
 
     // Number of bytes to return to outputStream for each call
-    public int numBytesToProcess = 5 * 1024 * 1024;
+    private final int numBytesToDownloadEachRead = 5 * 1024 * 1024;
 
     // Ramp up factor for downloading by parts
     public final int ramp = 2;
@@ -388,25 +386,48 @@ public class DXFile extends DXDataObject {
     }
 
     /**
-     * Downloads the file and returns a byte array of its contents.
-     *
-     * @return byte array containing file contents
-     */
-    // TODO: set project ID containing the file to be downloaded
-    public byte[] downloadBytes() {
-        // TODO: fix this
-//        ByteArrayOutputStream data = (ByteArrayOutputStream) downloadByParts(numBytesToProcess);
-//        return data.toByteArray();
-        return null;
-    }
-
-    /**
      * Downloads the file and returns a stream of its contents.
      *
      * @return stream containing file contents
      */
-    public InputStream downloadStream() {
-        return downloadByParts(numBytesToProcess);
+    public InputStream download() {
+        return new FileApiInputStream(0, describe().getFileSize());
+    }
+
+    /**
+     * Downloads the file and returns the specified stream of its contents.
+     *
+     * @param start first byte of the range within the file to be downloaded
+     * @param end last byte of the range within the file to be downloaded
+     *
+     * @return stream containing file contents within range specified
+     */
+    public InputStream download(long start, long end) {
+        return new FileApiInputStream(start, end);
+    }
+
+    /**
+     * Downloads the file contents into an output stream.
+     *
+     * @param os output stream file contents are downloaded into
+     * @throws IOException
+     */
+    public void downloadOutputStream(OutputStream os) throws IOException {
+        downloadOutputStream(os, 0, (int) describe().getFileSize());
+    }
+
+    /**
+     * Downloads the file contents into an output stream.
+     *
+     * @param os output stream file contents are downloaded into
+     * @param start first byte of the range within the file to be downloaded
+     * @param end last byte of the range within the file to be downloaded
+     * @throws IOException
+     */
+    public void downloadOutputStream(OutputStream os, long start, long end) throws IOException {
+        byte[] dataBuffer = new byte[(int) (end - start)];
+        download().read(dataBuffer);
+        os.write(dataBuffer);
     }
 
     @Override
@@ -426,47 +447,43 @@ public class DXFile extends DXDataObject {
      *
      * @return byte array containing the part of the file contents that is downloaded
      */
-    private static byte[] partDownloadRequest(String url, int chunkStart, int chunkEnd) {
+    private static byte[] partDownloadRequest(String url, long start, long end) {
         HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
         InputStream content = null;
-        byte[] data;
+        byte[] data = null;
 
         // HTTP GET request with bytes/_ge range header
         HttpGet request = new HttpGet(url);
-        request.addHeader("Range", "bytes=" + chunkStart + "-" + chunkEnd);
+        request.addHeader("Range", "bytes=" + start + "-" + end);
         HttpResponse response;
         try {
             response = httpclient.execute(request);
             content = response.getEntity().getContent();
+            data = IOUtils.toByteArray(content);
         } catch (IOException e) {
             throw new RuntimeException(e);
-        } finally {
-            try {
-                data = IOUtils.toByteArray(content);
-                content.close();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
         }
-
         return data;
     }
 
     private class FileApiInputStream extends InputStream {
-
         private final long readStart;
         private final long readEnd;
 
+        private FileDownloadResponse apiResponse;
         private long nextByteFromApi;
-        private InputStream unreadBytes;
+        private long chunkSize = minDownloadChunkSize;
+        private int request = 1;
+        private ByteArrayInputStream unreadBytes;
 
         private FileApiInputStream(long readStart, long readEnd) {
             this.readStart = readStart;
             this.readEnd = readEnd;
             this.nextByteFromApi = readStart;
 
-            OutputStream fileContentsBuffer = new ByteArrayOutputStream();
-            FileDownloadResponse apiResponse;
+            // API call returns URL and headers for HTTP GET requests
+            JsonNode output = apiCallOnObject("download", MAPPER.valueToTree(new FileDownloadRequest(true)),
+                    RetryStrategy.SAFE_TO_RETRY);
             try {
                 apiResponse = MAPPER.treeToValue(output, FileDownloadResponse.class);
             } catch (JsonProcessingException e) {
@@ -476,96 +493,48 @@ public class DXFile extends DXDataObject {
 
         @Override
         public int read() throws IOException {
-            // TODO: implement this in terms of read(byte[])
+            byte[] b = new byte[(int) describe().getFileSize()];
+            return read(b);
         }
 
         @Override
         public int read(byte[] b) throws IOException {
-            if (unreadBytes == null || unreadBytes.available() == 0) {
-                long startRange = nextByteFromApi;
-                long endRange = Math.min(startRange + maxDownloadChunkSize - 1, readEnd - 1); // Inclusive
-
-                byte[] downloadPart = partDownloadRequest(apiResponse.url, chunkStart, chunkEnd);
-            }
-            // TODO: determine if we're at EOF
-            assert(unreadBytes != null && unreadBytes.available() > 0);
-            return unreadBytes.read(b);
+            return read(b, 0, numBytesToDownloadEachRead);
         }
 
-    }
-
-    private InputStream downloadByParts(int numBytes) {
-        return new FileApiInputStream(0, describe().getFileSize());
-    }
-
-    /**
-     * Downloads contents of file in chunks and sends them to an output stream.
-     *
-     * @param numBytes number of bytes to send to the output stream at each iteration
-     *
-     * @return output stream containing file contents
-     */
-    private OutputStream downloadByParts2(int numBytes) {
-        int fileSize = describe().getFileSize();
-
-        // API call returns URL and headers for HTTP GET requests
-        JsonNode output = apiCallOnObject("download", MAPPER.valueToTree(new FileDownloadRequest(true)),
-                RetryStrategy.SAFE_TO_RETRY);
-
-        int chunkStart = 0;
-        int chunkSize = minDownloadChunkSize;
-        int chunkEnd = Math.min(chunkSize, fileSize);
-        InputStream downloadBuffer = new ByteArrayInputStream(new byte[0]);
-
-        int request = 1;
-        while (chunkStart < fileSize) {
-            // chunk size ramp up
+        @Override
+        public int read(byte[] b, int off, int numBytes) throws IOException {
+            // Ramp up download request size
             if (chunkSize < maxDownloadChunkSize) {
                 if (request > numRequestsBetweenRamp) {
                     request = 1;
-                    chunkSize = chunkSize * ramp;
+                    chunkSize = Math.min(chunkSize * ramp, maxDownloadChunkSize);
                 }
-                request++;
             }
 
-            try {
-                ByteArrayOutputStream chunkAsOutputStream = new ByteArrayOutputStream();
-                IOUtils.copy(downloadBuffer, chunkAsOutputStream);
+            long startRange = nextByteFromApi;
+            long endRange = startRange + chunkSize - 1;
 
-                // API requests to download chunks
-                while (chunkStart < fileSize && chunkAsOutputStream.size() < numBytes) {
-                    chunkEnd = Math.min(chunkStart + chunkSize - 1, fileSize);
-                    byte[] downloadPart = partDownloadRequest(apiResponse.url, chunkStart, chunkEnd);
-                    chunkAsOutputStream.write(downloadPart);
-                    chunkStart = chunkEnd + 1;
+            // Request more data to buffer
+            if (unreadBytes == null || unreadBytes.available() == 0) {
+                unreadBytes = new ByteArrayInputStream(partDownloadRequest(apiResponse.url, startRange, endRange));
+            }
+
+            assert (unreadBytes != null && unreadBytes.available() > 0);
+            int offset = off + Math.min(numBytes, unreadBytes.available());
+            unreadBytes.read(b, off, Math.min(numBytes, unreadBytes.available()));
+
+            if (endRange >= readEnd && unreadBytes.available() == 0) {
+                return -1;
+            } else {
+                // Increment byte range from request for next chunk of data to buffer
+                if (unreadBytes.available() == 0) {
+                    nextByteFromApi = endRange + 1;
+                    request++;
                 }
-
-                downloadBuffer = new ByteArrayInputStream(chunkAsOutputStream.toByteArray());
-
-                // Write remaining bytes to output stream
-                if (chunkEnd == fileSize) {
-                    byte[] bytesRead = new byte[downloadBuffer.available()];
-                    downloadBuffer.read(bytesRead);
-                    fileContentsBuffer.write(bytesRead);
-                }
-
-                // Parts to propagate to output stream based on requested part size
-                while (downloadBuffer.available() >= numBytes) {
-                    byte[] bytesRead = new byte[numBytes];
-                    downloadBuffer.read(bytesRead, 0, numBytes);
-                    fileContentsBuffer.write(bytesRead);
-                }
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+                return read(b, offset, numBytes);
             }
         }
-        try {
-            downloadBuffer.close();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-
-        return fileContentsBuffer;
     }
 
     /**
@@ -627,7 +596,7 @@ public class DXFile extends DXDataObject {
     }
 
     /**
-     * Uploads data from the specified byte array to the file.
+     * Uploads data from the specified stream to the file.
      *
      * <p>
      * The file must be in the "open" state. This method assumes exclusive access to the file: the
@@ -635,13 +604,13 @@ public class DXFile extends DXDataObject {
      * data to the same file concurrently.
      * </p>
      *
-     * @param data part of data in bytes to be uploaded
+     * @param data stream containing data in bytes to be uploaded
      */
     public void upload(InputStream data) {
         Preconditions.checkNotNull(data, "data may not be null");
 
         InputStream uploadBuffer = new ByteArrayInputStream(new byte[0]);
-        int numBytes = numBytesToProcess;
+        int numBytes = 5 * 1024 * 1024;
 
         int index = 1;
         try {
