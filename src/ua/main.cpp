@@ -142,6 +142,13 @@ void handle_bad_alloc(const std::bad_alloc &e) {
 // consumption of UA will roughly be the following:
 //
 // Memory footprint = [#read-threads + 2 * (#compress-threads + #upload-threads)] * chunk-size
+//
+// The approach to manage the memory usage is done is these steps:
+// 1. At the begining determine how much memeory is available in the system and set
+//    a resident set size (RSS) limit to 80% of that.
+// 2. Check the current RSS in the read threads before reading new data. If the RSS is larger
+//    than the limit, let the thread sleep for 2 seconds initially, and back-off exponentially
+//    up to a maximum of 16 seconds.
 
 long getAvailableSystemMemory()
 {
@@ -157,7 +164,6 @@ long getAvailableSystemMemory()
 #endif
 }
 
-//static long freeMemoryLimit = 250*1024*1024; // 100 MB
 static long rssLimit = 0;
 void initializeRSSLimit() {
   long freeMemory = getAvailableSystemMemory();
@@ -165,32 +171,17 @@ void initializeRSSLimit() {
   DXLOG(logINFO) << "Resident Set Size Limit (RSS): " << rssLimit;
 }
 
-// Before starting the threads... check the total free memory, and limit the RSS instead..
-//ok, lets try that
-
 long getRSS() {
 #ifdef WINDOWS_BUILD
+  PROCESS_MEMORY_COUNTERS info;
+  GetProcessMemoryInfo( GetCurrentProcess( ), &info, sizeof(info) );
+  return (long)info.WorkingSetSize;
 #else
-  using std::ios_base;
-  using std::ifstream;
-  using std::string;
   ifstream statStream("/proc/self/statm",ios_base::in);
-  if (!statStream.good())
+  if (!statStream.good()) {
     return 0;
+  }
 
-  // dummy vars for leading entries in stat that we don't care about
-  /*string pid, comm, state, ppid, pgrp, session, tty_nr;
-  string tpgid, flags, minflt, cminflt, majflt, cmajflt;
-  string utime, stime, cutime, cstime, priority, nice;
-  string O, itrealvalue, starttime;
-  unsigned long vsize;
-  long rss;
-
-  statStream >> pid >> comm >> state >> ppid >> pgrp >> session >> tty_nr
-	      >> tpgid >> flags >> minflt >> cminflt >> majflt >> cmajflt
-	      >> utime >> stime >> cutime >> cstime >> priority >> nice
-	      >> O >> itrealvalue >> starttime >> vsize >> rss; // don't care about the rest
-  */
   int s = 0;
   long rss = 0;
   statStream >> s >> rss;
@@ -200,7 +191,6 @@ long getRSS() {
 }
 
 bool checkMemory() {
-
   // if RSS limit is not set, don't check memory usage
   if (rssLimit <= 0) {
     return true;
@@ -228,7 +218,7 @@ void readChunks() {
 	if (retry) {
 	  delay = min(delay*2, 16);
 	}
-	DXLOG(logINFO) << "RSS larger that limit. Delaying read thread by " << delay << "secs";
+	DXLOG(logWARNING) << "RSS larger that limit. Delaying read thread by " << delay << "secs";
 	boost::this_thread::sleep(boost::posix_time::seconds(delay));
 	retry = true;
 	continue;
