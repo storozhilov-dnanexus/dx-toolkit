@@ -4193,8 +4193,10 @@ class TestDXClientFindInOrg(DXTestCase):
         org_members.sort()
 
         # Basic test to check consistency of client output to directly invoking API
-        output = run("dx find org apps org-piratelabs --brief").strip().split("\n")
+        output = run("dx find org apps org-piratelabs").strip().split("\n")
+        print('output={}'.format(output))
         dx_api_output = dxpy.api.org_find_apps(self.org_id)
+        print('dx_api_output={}'.format(dx_api_output))
         self.assertEqual(output, [member['id'] for member in dx_api_output['results']])
         self.assertEqual(output, org_members)
 
