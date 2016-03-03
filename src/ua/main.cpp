@@ -218,7 +218,7 @@ void readChunks() {
 	if (retry) {
 	  delay = min(delay*2, 16);
 	}
-	DXLOG(logWARNING) << "RSS larger that limit. Delaying read thread by " << delay << "secs";
+	DXLOG(logWARNING) << "RSS larger than limit. Delaying read thread by " << delay << "secs";
 	boost::this_thread::sleep(boost::posix_time::seconds(delay));
 	retry = true;
 	continue;
