@@ -17,10 +17,10 @@
 package com.dnanexus;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Arrays;
 import java.util.Map;
 
 import org.apache.commons.codec.digest.DigestUtils;
@@ -75,7 +75,11 @@ public class DXFile extends DXDataObject {
                     this.project, this.env, null);
 
             if (uploadData != null) {
-                file.upload(uploadData);
+                try {
+                    file.upload(uploadData);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
             }
 
             return file;
@@ -336,17 +340,19 @@ public class DXFile extends DXDataObject {
     }
 
     // Size of the part to be uploaded
-    @VisibleForTesting
-    int uploadChunkSize = 16 * 1024 * 1024;
+    private final int uploadChunkSize = 16 * 1024 * 1024;
 
     // Minimum size of the part to be downloaded
-    public final int minDownloadChunkSize = 64 * 1024;
+    private final int minDownloadChunkSize = 64 * 1024;
 
     // Maximum size of the part to be downloaded
-    public final int maxDownloadChunkSize = 16 * 1024 * 1024;
+    private final int maxDownloadChunkSize = 16 * 1024 * 1024;
 
-    // Number of bytes to return to outputStream for each call
-    private final int numBytesToDownloadEachRead = 5 * 1024 * 1024;
+    // Number of bytes to read/write each call
+    @VisibleForTesting
+    private int numBytesToDownloadEachRead = 5 * 1024 * 1024;
+    @VisibleForTesting
+    private int numBytesToUploadPerPart = 5 * 1024 * 1024;
 
     // Ramp up factor for downloading by parts
     public final int ramp = 2;
@@ -537,6 +543,15 @@ public class DXFile extends DXDataObject {
         }
     }
 
+    public void upload(InputStream data) throws IOException {
+        byte[] byteData = IOUtils.toByteArray(data);
+        new FileApiOutputStream().write(byteData);
+    }
+
+    public OutputStream upload() {
+        return new FileApiOutputStream();
+    }
+
     /**
      * HTTP PUT request to upload the data part to the server.
      *
@@ -595,75 +610,126 @@ public class DXFile extends DXDataObject {
         }
     }
 
-    /**
-     * Uploads data from the specified stream to the file.
-     *
-     * <p>
-     * The file must be in the "open" state. This method assumes exclusive access to the file: the
-     * file must have no parts uploaded before this call is made, and no other clients may upload
-     * data to the same file concurrently.
-     * </p>
-     *
-     * @param data stream containing data in bytes to be uploaded
-     */
-    public void upload(InputStream data) {
-        Preconditions.checkNotNull(data, "data may not be null");
+    private class FileApiOutputStream extends OutputStream {
+        private InputStream unwrittenBytes;
+        private int offset = 0;
+        private int index = 1;
 
-        InputStream uploadBuffer = new ByteArrayInputStream(new byte[0]);
-        int numBytes = 5 * 1024 * 1024;
+        @Override
+        public void write(int b) throws IOException {
+            // TODO Auto-generated method stub
 
-        int index = 1;
-        try {
-            while (data.available() > 0) {
-                // Bytes of uploadChunkSize to be buffered in output stream
-                ByteArrayOutputStream chunk = new ByteArrayOutputStream();
+        }
 
-                // Bytes from buffer left over are copied over to the output stream
-                IOUtils.copy(uploadBuffer, chunk);
+        @Override
+        public void write(byte[] b) throws IOException {
+            write(b, 0, numBytesToUploadPerPart);
+        }
 
-                // Buffer bytes in chunks. Number of bytes in buffer should be at least numBytes.
-                while (chunk.size() < numBytes && data.available() > 0) {
-                    byte[] temp = new byte[Math.min(uploadChunkSize, data.available())];
-                    data.read(temp, 0, Math.min(uploadChunkSize, data.available()));
-                    chunk.write(temp);
-                }
+        @Override
+        public void write(byte[] b, int off, int numBytes) throws IOException {
+            // Get more data to buffer
+            if (unwrittenBytes == null || unwrittenBytes.available() == 0) {
+                unwrittenBytes = new ByteArrayInputStream(Arrays.copyOfRange(b, 0, Math.min(uploadChunkSize, b.length)));
+            }
 
-                // Need to convert buffer to input stream so it can be read
-                uploadBuffer = new ByteArrayInputStream(chunk.toByteArray());
+            //assert(unwrittenBytes != null && unwrittenBytes.available() != 0);
+            byte[] uploadPart = new byte[Math.min(numBytes, unwrittenBytes.available())];
+            System.out.println(offset); //DBUG
+            System.out.println("bytes left to write: " + unwrittenBytes.available()); //DBUG
+            unwrittenBytes.read(uploadPart, offset, Math.min(numBytes, unwrittenBytes.available()));
+            System.out.println("bytes left to write now: " + unwrittenBytes.available()); //DBUG
+            offset += numBytes;
 
-                // Upload bytes from buffer
-                while (uploadBuffer.available() >= numBytes) {
-                    byte[] uploadPart = new byte[numBytes];
-                    uploadBuffer.read(uploadPart, 0, numBytes);
-                    partUploadRequest(uploadPart, index);
-                    index++;
-                }
+            // upload bytes to server
+            partUploadRequest(uploadPart, index);
 
-                // Uploads last few bytes from buffer when there is no more data to be read
-                if (uploadBuffer.available() < numBytes && data.available() == 0) {
-                    byte[] uploadPart = IOUtils.toByteArray(uploadBuffer);
-                    partUploadRequest(uploadPart, index);
+            index++;
+
+            if (unwrittenBytes.available() == 0) {
+                offset = 0;
+                try {
+                    b = Arrays.copyOfRange(b, uploadChunkSize, b.length);
+                } catch (IllegalArgumentException e) {
+                    // no more bytes to be written
+                    b = new byte[0];
                 }
             }
-        } catch (IOException e) {
-            throw new RuntimeException();
+            if (b.length != 0) {
+                write(b, off, numBytes);
+            }
         }
     }
 
-    /**
-     * Uploads data from the specified byte array to the file.
-     *
-     * <p>
-     * The file must be in the "open" state. This method assumes exclusive access to the file: the
-     * file must have no parts uploaded before this call is made, and no other clients may upload
-     * data to the same file concurrently.
-     * </p>
-     *
-     * @param data data in bytes to be uploaded
-     */
-    public void upload(byte[] data) {
-        Preconditions.checkNotNull(data, "data may not be null");
-
-        upload(new ByteArrayInputStream(data));
-    }
+//    /**
+//     * Uploads data from the specified stream to the file.
+//     *
+//     * <p>
+//     * The file must be in the "open" state. This method assumes exclusive access to the file: the
+//     * file must have no parts uploaded before this call is made, and no other clients may upload
+//     * data to the same file concurrently.
+//     * </p>
+//     *
+//     * @param data stream containing data in bytes to be uploaded
+//     */
+//    public void upload(InputStream data) {
+//        Preconditions.checkNotNull(data, "data may not be null");
+//
+//        InputStream uploadBuffer = new ByteArrayInputStream(new byte[0]);
+//        int numBytes = 5 * 1024 * 1024;
+//
+//        int index = 1;
+//        try {
+//            while (data.available() > 0) {
+//                // Bytes of uploadChunkSize to be buffered in output stream
+//                ByteArrayOutputStream chunk = new ByteArrayOutputStream();
+//
+//                // Bytes from buffer left over are copied over to the output stream
+//                IOUtils.copy(uploadBuffer, chunk);
+//
+//                // Buffer bytes in chunks. Number of bytes in buffer should be at least numBytes.
+//                while (chunk.size() < numBytes && data.available() > 0) {
+//                    byte[] temp = new byte[Math.min(uploadChunkSize, data.available())];
+//                    data.read(temp, 0, Math.min(uploadChunkSize, data.available()));
+//                    chunk.write(temp);
+//                }
+//
+//                // Need to convert buffer to input stream so it can be read
+//                uploadBuffer = new ByteArrayInputStream(chunk.toByteArray());
+//
+//                // Upload bytes from buffer
+//                while (uploadBuffer.available() >= numBytes) {
+//                    byte[] uploadPart = new byte[numBytes];
+//                    uploadBuffer.read(uploadPart, 0, numBytes);
+//                    partUploadRequest(uploadPart, index);
+//                    index++;
+//                }
+//
+//                // Uploads last few bytes from buffer when there is no more data to be read
+//                if (uploadBuffer.available() < numBytes && data.available() == 0) {
+//                    byte[] uploadPart = IOUtils.toByteArray(uploadBuffer);
+//                    partUploadRequest(uploadPart, index);
+//                }
+//            }
+//        } catch (IOException e) {
+//            throw new RuntimeException();
+//        }
+//    }
+//
+//    /**
+//     * Uploads data from the specified byte array to the file.
+//     *
+//     * <p>
+//     * The file must be in the "open" state. This method assumes exclusive access to the file: the
+//     * file must have no parts uploaded before this call is made, and no other clients may upload
+//     * data to the same file concurrently.
+//     * </p>
+//     *
+//     * @param data data in bytes to be uploaded
+//     */
+//    public void upload(byte[] data) {
+//        Preconditions.checkNotNull(data, "data may not be null");
+//
+//        upload(new ByteArrayInputStream(data));
+//    }
 }
