@@ -11,7 +11,6 @@ Documentation on classes and methods:
    dxpy_dxproject
    dxpy_dxrecord
    dxpy_dxfile
-   dxpy_dxgtable
    dxpy_apps
    dxpy_search
 
