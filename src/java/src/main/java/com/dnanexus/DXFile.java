@@ -17,7 +17,6 @@
 package com.dnanexus;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -43,6 +42,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
+import com.google.common.io.ByteStreams;
 
 /**
  * A file (an opaque sequence of bytes).
@@ -222,13 +222,10 @@ public class DXFile extends DXDataObject {
         private String md5;
         @JsonProperty
         private int size;
-        @JsonProperty
-        private int index = 1;
 
-        private FileUploadRequest(int size, String md5, int index) {
+        private FileUploadRequest(int size, String md5) {
             this.size = size;
             this.md5 = md5;
-            this.index = index;
         }
     }
 
@@ -582,120 +579,8 @@ public class DXFile extends DXDataObject {
     }
 
     /**
-     * HTTP PUT request to upload the data part to the server.
-     *
-     * @param dataChunk data part that is uploaded
-     * @param index position for which the data lies in the file
-     */
-    private void partUploadRequest(byte[] dataChunk, int index) {
-        // MD5 digest as 32 character hex string
-        String dataMD5 = DigestUtils.md5Hex(dataChunk);
-
-        // API call returns URL and headers
-        JsonNode output =
-                apiCallOnObject("upload", MAPPER.valueToTree(new FileUploadRequest(dataChunk.length, dataMD5, index)),
-                        RetryStrategy.SAFE_TO_RETRY);
-
-        FileUploadResponse apiResponse;
-        try {
-            apiResponse = MAPPER.treeToValue(output, FileUploadResponse.class);
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException(e);
-        }
-
-        // Check that the content-length received by the apiserver is the same
-        // as the length of the data
-        if (apiResponse.headers.containsKey("content-length")) {
-            int apiserverContentLength = Integer.parseInt(apiResponse.headers.get("content-length"));
-            if (apiserverContentLength != dataChunk.length) {
-                throw new AssertionError(
-                        "Content-length received by the apiserver did not match that of the input data");
-            }
-        }
-
-        // HTTP PUT request to upload URL and headers
-        HttpPut request = new HttpPut(apiResponse.url);
-
-        // Set headers
-        for (Map.Entry<String, String> header : apiResponse.headers.entrySet()) {
-            String key = header.getKey();
-
-            // The request implicitly supplies the content length in the headers
-            // when executed
-            if (key.equals("content-length")) {
-                continue;
-            }
-
-            request.setHeader(key, header.getValue());
-        }
-
-        // Set entity
-        request.setEntity(new ByteArrayEntity(dataChunk));
-        HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
-        try {
-            httpclient.execute(request);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    /**
-     * Uploads data from the specified stream to the file.
-     *
-     * <p>
-     * The file must be in the "open" state. This method assumes exclusive access to the file: the
-     * file must have no parts uploaded before this call is made, and no other clients may upload
-     * data to the same file concurrently.
-     * </p>
-     *
-     * @param data stream containing data in bytes to be uploaded
-     */
-    public void upload(InputStream data) {
-        Preconditions.checkNotNull(data, "data may not be null");
-
-        InputStream uploadBuffer = new ByteArrayInputStream(new byte[0]);
-        int numBytes = 5 * 1024 * 1024;
-
-        int index = 1;
-        try {
-            while (data.available() > 0) {
-                // Bytes of uploadChunkSize to be buffered in output stream
-                ByteArrayOutputStream chunk = new ByteArrayOutputStream();
-
-                // Bytes from buffer left over are copied over to the output stream
-                IOUtils.copy(uploadBuffer, chunk);
-
-                // Buffer bytes in chunks. Number of bytes in buffer should be at least numBytes.
-                while (chunk.size() < numBytes && data.available() > 0) {
-                    byte[] temp = new byte[Math.min(uploadChunkSize, data.available())];
-                    data.read(temp, 0, Math.min(uploadChunkSize, data.available()));
-                    chunk.write(temp);
-                }
-
-                // Need to convert buffer to input stream so it can be read
-                uploadBuffer = new ByteArrayInputStream(chunk.toByteArray());
-
-                // Upload bytes from buffer
-                while (uploadBuffer.available() >= numBytes) {
-                    byte[] uploadPart = new byte[numBytes];
-                    uploadBuffer.read(uploadPart, 0, numBytes);
-                    partUploadRequest(uploadPart, index);
-                    index++;
-                }
-
-                // Uploads last few bytes from buffer when there is no more data to be read
-                if (uploadBuffer.available() < numBytes && data.available() == 0) {
-                    byte[] uploadPart = IOUtils.toByteArray(uploadBuffer);
-                    partUploadRequest(uploadPart, index);
-                }
-            }
-        } catch (IOException e) {
-            throw new RuntimeException();
-        }
-    }
-
-    /**
-     * Uploads data from the specified byte array to the file.
+     * Uploads data from the specified byte array to the file. <b>This implementation buffers the
+     * data in-memory before being uploaded to the server; therefore, the data must be small.</b>
      *
      * <p>
      * The file must be in the "open" state. This method assumes exclusive access to the file: the
@@ -708,6 +593,72 @@ public class DXFile extends DXDataObject {
     public void upload(byte[] data) {
         Preconditions.checkNotNull(data, "data may not be null");
 
-        upload(new ByteArrayInputStream(data));
+        // MD5 digest as 32 character hex string
+        String dataMD5 = DigestUtils.md5Hex(data);
+
+        // API call returns URL and headers
+        JsonNode output = apiCallOnObject("upload", MAPPER.valueToTree(new FileUploadRequest(data.length, dataMD5)),
+                RetryStrategy.SAFE_TO_RETRY);
+
+        FileUploadResponse apiResponse;
+        try {
+            apiResponse = MAPPER.treeToValue(output, FileUploadResponse.class);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
+
+        // Check that the content-length received by the apiserver is the same
+        // as the length of the data
+        if (apiResponse.headers.containsKey("content-length")) {
+            int apiserverContentLength = Integer.parseInt(apiResponse.headers.get("content-length"));
+            if (apiserverContentLength != data.length) {
+                throw new AssertionError(
+                        "Content-length received by the apiserver did not match that of the input data");
+            }
+        }
+
+        // HTTP PUT request to upload URL and headers
+        HttpPut request = new HttpPut(apiResponse.url);
+        request.setEntity(new ByteArrayEntity(data));
+
+        for (Map.Entry<String, String> header : apiResponse.headers.entrySet()) {
+            String key = header.getKey();
+
+            // The request implicitly supplies the content length in the headers
+            // when executed
+            if (key.equals("content-length")) {
+                continue;
+            }
+
+            request.setHeader(key, header.getValue());
+        }
+
+        HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
+        try {
+            httpclient.execute(request);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Uploads data from the specified stream to the file. <b>This implementation buffers the
+     * data in-memory before being uploaded to the server; therefore, the data must be small.</b>
+     *
+     * <p>
+     * The file must be in the "open" state. This method assumes exclusive access to the file: the
+     * file must have no parts uploaded before this call is made, and no other clients may upload
+     * data to the same file concurrently.
+     * </p>
+     *
+     * @param data stream containing data to be uploaded
+     */
+    public void upload(InputStream data) {
+        Preconditions.checkNotNull(data, "data may not be null");
+        try {
+            this.upload(ByteStreams.toByteArray(data));
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 }

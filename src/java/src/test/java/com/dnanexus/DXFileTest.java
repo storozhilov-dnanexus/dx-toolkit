@@ -16,6 +16,7 @@
 
 package com.dnanexus;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -235,14 +236,27 @@ public class DXFileTest {
     }
 
     @Test
-    public void testUploadDownloadEmptyFails() {
+    public void testUploadDownloadEmptyFails() throws IOException {
+        // Upload bytes, download bytes
         byte[] uploadBytes = new byte[0];
 
         DXFile f = DXFile.newFile().setProject(testProject).build();
         f.upload(uploadBytes);
-        // File needs at least 1 part to be closed
-        thrown.expect(InvalidStateException.class);
         f.closeAndWait();
+        byte[] downloadBytes = f.downloadBytes();
+
+        Assert.assertArrayEquals(uploadBytes, downloadBytes);
+
+        // Upload stream, download stream
+        InputStream uploadStream = new ByteArrayInputStream(uploadBytes);
+
+        f = DXFile.newFile().setProject(testProject).build();
+        f.upload(uploadStream);
+        f.closeAndWait();
+
+        byte[] bytesFromDownloadStream = IOUtils.toByteArray(f.downloadStream());
+
+        Assert.assertArrayEquals(uploadBytes, bytesFromDownloadStream);
     }
 
     @Test
