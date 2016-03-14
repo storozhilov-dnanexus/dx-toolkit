@@ -101,7 +101,7 @@ void File::init(const bool tryResuming) {
     toCompress = false;
   }
 
-  if (size / chunkSize > MAX_UPLOAD_CHUNKS) {
+  if ((double) size / chunkSize > MAX_UPLOAD_CHUNKS) {
     chunkSize = size / MAX_UPLOAD_CHUNKS + ( (size % MAX_UPLOAD_CHUNKS) ? 1 : 0);
     DXLOG(logWARNING) << "Chunk-size too small, will change to " << chunkSize;
   }

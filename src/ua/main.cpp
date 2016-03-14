@@ -164,13 +164,18 @@ long getAvailableSystemMemory()
 #endif
 }
 
+// rssLimit is the maximum amount of memory the program may use.
+// It is set to be 80% of the system's free memory at program startup.
+// If the limit is reached, the read threads are delayed
 static long rssLimit = 0;
+
 void initializeRSSLimit() {
   long freeMemory = getAvailableSystemMemory();
   rssLimit = freeMemory*8/10;
   DXLOG(logINFO) << "Resident Set Size Limit (RSS): " << rssLimit;
 }
 
+// Get the current memory usage
 long getRSS() {
 #ifdef WINDOWS_BUILD
   PROCESS_MEMORY_COUNTERS info;
@@ -179,10 +184,11 @@ long getRSS() {
 #else
   ifstream statStream("/proc/self/statm",ios_base::in);
   if (!statStream.good()) {
+    DXLOG(logWARNING) << "Unable to get process' memory usage";
     return 0;
   }
 
-  int s = 0;
+  long s = 0;
   long rss = 0;
   statStream >> s >> rss;
   statStream.close();
@@ -190,7 +196,7 @@ long getRSS() {
 #endif
 }
 
-bool checkMemory() {
+bool isMemoryUseNormal() {
   // if RSS limit is not set, don't check memory usage
   if (rssLimit <= 0) {
     return true;
@@ -198,9 +204,7 @@ bool checkMemory() {
   
   long residentSet = getRSS();
   DXLOG(logINFO) << "Free Memory: " << getAvailableSystemMemory() << " rss " << residentSet ;
-  // The lowest amount of free memory before delaying the read threads
 
-  //if (getAvailableSystemMemory() < freeMemoryLimit) {
   if (residentSet > rssLimit) {
     return false;
   }
@@ -209,22 +213,16 @@ bool checkMemory() {
 
 void readChunks() {
   try {
-    bool retry = false;
-    int delay = 2;
+    int delay = 1;
     while (true) {
       // If the upload  is using a lot of memory delay the read thread for a bit.
-      if (!checkMemory()) {
-	//DXLOG(logINFO) << "Less than 250MB of memory available. Delaying read thread.";
-	if (retry) {
-	  delay = min(delay*2, 16);
-	}
+      if (!isMemoryUseNormal()) {
+	delay = min(delay*2, 16);	
 	DXLOG(logWARNING) << "RSS larger than limit. Delaying read thread by " << delay << "secs";
 	boost::this_thread::sleep(boost::posix_time::seconds(delay));
-	retry = true;
 	continue;
       }
-      retry = false;
-      delay = 2;
+      delay = 1; //Reset the delay
       Chunk * c = chunksToRead.consume();
 
       c->log("Reading...");
