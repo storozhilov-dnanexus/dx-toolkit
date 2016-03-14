@@ -27,6 +27,7 @@
 
 #ifdef WINDOWS_BUILD
 #include <windows.h>
+#include <Psapi.h>
 #else
 #include <unistd.h>
 #endif
