@@ -174,7 +174,88 @@ public class DXFile extends DXDataObject {
          * @return size of file
          */
         public long getSize() {
+            Preconditions.checkState(this.size >= 0, "file size is not valid");
             return size;
+        }
+    }
+
+    private class FileApiInputStream extends InputStream {
+        private FileDownloadResponse apiResponse;
+
+        private long chunkSize = minDownloadChunkSize;
+        private long nextByteFromApi;
+        private final long readEnd;
+        private int request = 1;
+        private ByteArrayInputStream unreadBytes;
+
+        private FileApiInputStream(long readStart, long readEnd) {
+            this.readEnd = readEnd;
+            this.nextByteFromApi = readStart;
+
+            // API call returns URL and headers for HTTP GET requests
+            JsonNode output = apiCallOnObject("download", MAPPER.valueToTree(new FileDownloadRequest(true)),
+                    RetryStrategy.SAFE_TO_RETRY);
+            try {
+                apiResponse = MAPPER.treeToValue(output, FileDownloadResponse.class);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        @Override
+        public int read() throws IOException {
+            byte[] b = new byte[1];
+            int numBytesRead = read(b);
+            if (numBytesRead != -1) {
+                return b[0];
+            }
+            return -1;
+        }
+
+        @Override
+        public int read(byte[] b) throws IOException {
+            return read(b, 0, b.length);
+        }
+
+        @Override
+        public int read(byte[] b, int off, int numBytes) throws IOException {
+            if (off < 0 || numBytes < 0 || numBytes > b.length - off) {
+                throw new IndexOutOfBoundsException();
+            }
+
+            // Ramp up download request size
+            if (chunkSize < maxDownloadChunkSize) {
+                if (request > numRequestsBetweenRamp) {
+                    request = 1;
+                    chunkSize = Math.min(chunkSize * ramp, maxDownloadChunkSize);
+                }
+            }
+
+            long startRange = nextByteFromApi;
+            long endRange = startRange + chunkSize - 1;
+
+            if (startRange >= readEnd) {
+                return -1;
+            }
+
+            // Request more data to buffer
+            if (unreadBytes == null || unreadBytes.available() == 0) {
+                unreadBytes = new ByteArrayInputStream(partDownloadRequest(apiResponse.url, startRange, endRange));
+            }
+
+            assert (unreadBytes != null && unreadBytes.available() > 0);
+            int bytesToRead = Math.min(numBytes, unreadBytes.available());
+            int bytesRead = unreadBytes.read(b, off, bytesToRead);
+
+            // verify expected bytes read, namely from unreadBytes.available()
+            assert (bytesRead == bytesToRead);
+
+            // Increment byte range from request for next chunk of data to buffer
+            if (unreadBytes.available() == 0) {
+                nextByteFromApi = endRange + 1;
+                request++;
+            }
+            return bytesToRead;
         }
     }
 
@@ -331,19 +412,49 @@ public class DXFile extends DXDataObject {
         return new Builder(env);
     }
 
-    // Size of the part to be uploaded
-    @VisibleForTesting
-    int uploadChunkSize = 16 * 1024 * 1024;
+    /**
+     * HTTP GET request to download part of the file.
+     *
+     * @param url URL to which an HTTP GET request is made to download the file
+     * @param chunkStart beginning of the part (in the byte array containing the file contents) to
+     *        be downloaded. This index is inclusive in the range.
+     * @param chunkEnd end of the part (in the byte array containing the file contents) to be
+     *        downloaded. This index is inclusive in the range.
+     *
+     * @return byte array containing the part of the file contents that is downloaded
+     *
+     * @throws ClientProtocolException HTTP request to the download URL cannot be executed
+     * @throws IOException unable to get file contents from HTTP response, or file contents cannot
+     *         be cast into a byte array
+     */
+    private static byte[] partDownloadRequest(String url, long start, long end)
+            throws ClientProtocolException, IOException {
+        Preconditions.checkState(end - start <= (long) 2 * 1024 * 1024 * 1024,
+                "Download chunk size cannot be larger than 2GB");
+        HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
 
-    // Minimum size of the part to be downloaded
-    private final int minDownloadChunkSize = 64 * 1024;
+        // HTTP GET request with bytes/_ge range header
+        HttpGet request = new HttpGet(url);
+        request.addHeader("Range", "bytes=" + start + "-" + end);
+        HttpResponse response = httpclient.execute(request);
+        InputStream content = response.getEntity().getContent();
+
+        return IOUtils.toByteArray(content);
+    }
 
     // Maximum size of the part to be downloaded
     private final int maxDownloadChunkSize = 16 * 1024 * 1024;
 
+    // Minimum size of the part to be downloaded
+    private final int minDownloadChunkSize = 64 * 1024;
+    private final int numRequestsBetweenRamp = 4;
+
     // Ramp up factor for downloading by parts
     private final int ramp = 2;
-    private final int numRequestsBetweenRamp = 4;
+
+    // Size of the part to be uploaded
+    @VisibleForTesting
+    int uploadChunkSize = 16 * 1024 * 1024;
 
     private DXFile(String fileId, DXContainer project, DXEnvironment env, JsonNode describe) {
         super(fileId, "file", project, env, describe);
@@ -377,6 +488,36 @@ public class DXFile extends DXDataObject {
     }
 
     /**
+     * Downloads the entire file into a byte array.
+     *
+     * @return byte array containing file contents
+     * @throws IOException downloaded contents cannot be cast into a byte array
+     */
+    public byte[] downloadBytes() throws IOException {
+        return downloadBytes(0, describe().getSize());
+    }
+
+    /**
+     * Downloads the specified byte range of the file into a byte array. Range requested must be no
+     * larger than 2 GB.
+     *
+     * @param start first byte of the range within the file to be downloaded. The start byte is
+     *        inclusive in the range, and 0 is indexed as the first byte in the file.
+     * @param end last byte of the range within the file to be downloaded. The end byte is exclusive
+     *        (not included in the range).
+     *
+     * @return byte array containing file contents within range specified
+     * @throws IOException downloaded contents cannot be cast into a byte array
+     */
+    public byte[] downloadBytes(long start, long end) throws IOException {
+        Preconditions.checkState(describe().getSize() <= (long) 2 * 1024 * 1024 * 1024,
+                "File larger than 2GB cannot be downloaded with downloadBytes");
+        InputStream is = downloadStream(start, end);
+
+        return IOUtils.toByteArray(is);
+    }
+
+    /**
      * Downloads the entire file and returns a stream of its contents.
      *
      * @return stream containing file contents
@@ -396,48 +537,17 @@ public class DXFile extends DXDataObject {
      * @return stream containing file contents within range specified
      */
     public InputStream downloadStream(long start, long end) {
-        Preconditions.checkState(end >= start, "The start byte cannot be larger than the end byte");
+        Preconditions.checkArgument(end >= start, "The start byte cannot be larger than the end byte");
         return new FileApiInputStream(start, end);
     }
 
-    public byte[] downloadBytes() {
-        return downloadBytes(0, describe().getSize());
-    }
-
     /**
-     * Downloads the specified byte range of the file into a byte array. File must be no larger than
-     * 2 GB.
-     *
-     * @param start first byte of the range within the file to be downloaded. The start byte is
-     *        inclusive in the range, and 0 is indexed as the first byte in the file.
-     * @param end last byte of the range within the file to be downloaded. The end byte is exclusive
-     *        (not included in the range).
-     *
-     * @return byte array containing file contents within range specified
-     */
-    public byte[] downloadBytes(long start, long end) {
-        Preconditions.checkState(describe().getSize() <= (long) 2 * 1024 * 1024 * 1024,
-                "File larger than 2GB cannot be downloaded with downloadBytes");
-        InputStream is = downloadStream(start, end);
-        byte[] bytes;
-        try {
-            bytes = IOUtils.toByteArray(is);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
-
-        return bytes;
-    }
-
-    /**
-     * Downloads the entire file and writes them to an OutputStream.
+     * Downloads the entire file and writes the data to an OutputStream.
      *
      * @param os output stream downloaded file contents are written into
-     *
-     * @throws IOException
      */
-    public void downloadOutputStream(OutputStream os) {
-        downloadOutputStream(os, 0, describe().getSize());
+    public void downloadToOutputStream(OutputStream os) {
+        downloadToOutputStream(os, 0, describe().getSize());
     }
 
     /**
@@ -451,7 +561,7 @@ public class DXFile extends DXDataObject {
      *
      * @throws IOException
      */
-    public void downloadOutputStream(OutputStream os, long start, long end) {
+    public void downloadToOutputStream(OutputStream os, long start, long end) {
         InputStream is = downloadStream(start, end);
         try {
             IOUtils.copyLarge(is, os);
@@ -464,118 +574,6 @@ public class DXFile extends DXDataObject {
     public Describe getCachedDescribe() {
         this.checkCachedDescribeAvailable();
         return DXJSON.safeTreeToValue(this.cachedDescribe, Describe.class);
-    }
-
-    /**
-     * HTTP GET request to download part of the file.
-     *
-     * @param url URL to which an HTTP GET request is made to download the file
-     * @param chunkStart beginning of the part (in the byte array containing the file contents) to
-     *        be downloaded. This index is inclusive in the range.
-     * @param chunkEnd end of the part (in the byte array containing the file contents) to be
-     *        downloaded. This index is inclusive in the range.
-     *
-     * @return byte array containing the part of the file contents that is downloaded
-     *
-     * @throws ClientProtocolException HTTP request to the download URL cannot be executed
-     * @throws IOException unable to get file contents from HTTP response, or file contents cannot
-     *         be cast into a byte array
-     */
-    private static byte[] partDownloadRequest(String url, long start, long end)
-            throws ClientProtocolException, IOException {
-        Preconditions.checkState(end - start <= (long) 2 * 1024 * 1024 * 1024,
-                "Download chunk size cannot be larger than 2GB");
-        HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
-        InputStream content = null;
-        byte[] data = null;
-
-        // HTTP GET request with bytes/_ge range header
-        HttpGet request = new HttpGet(url);
-        request.addHeader("Range", "bytes=" + start + "-" + end);
-        HttpResponse response;
-        response = httpclient.execute(request);
-        content = response.getEntity().getContent();
-        data = IOUtils.toByteArray(content);
-
-        return data;
-    }
-
-    private class FileApiInputStream extends InputStream {
-        private final long readEnd;
-
-        private FileDownloadResponse apiResponse;
-        private long nextByteFromApi;
-        private long chunkSize = minDownloadChunkSize;
-        private int request = 1;
-        private ByteArrayInputStream unreadBytes;
-
-        private FileApiInputStream(long readStart, long readEnd) {
-            this.readEnd = readEnd;
-            this.nextByteFromApi = readStart;
-
-            // API call returns URL and headers for HTTP GET requests
-            JsonNode output = apiCallOnObject("download", MAPPER.valueToTree(new FileDownloadRequest(true)),
-                    RetryStrategy.SAFE_TO_RETRY);
-            try {
-                apiResponse = MAPPER.treeToValue(output, FileDownloadResponse.class);
-            } catch (JsonProcessingException e) {
-                throw new RuntimeException(e);
-            }
-        }
-
-        @Override
-        public int read() throws IOException {
-            byte[] b = new byte[1];
-            int byteToRead = read(b);
-            if (byteToRead != -1) {
-                return b[0];
-            } else {
-                return -1;
-            }
-
-        }
-
-        @Override
-        public int read(byte[] b) throws IOException {
-            return read(b, 0, b.length);
-        }
-
-        @Override
-        public int read(byte[] b, int off, int numBytes) throws IOException {
-            Preconditions.checkState(b.length <= (long) 2 * 1024 * 1024 * 1024,
-                    "Array of bytes cannot be larger than 2GB");
-
-            // Ramp up download request size
-            if (chunkSize < maxDownloadChunkSize) {
-                if (request > numRequestsBetweenRamp) {
-                    request = 1;
-                    chunkSize = Math.min(chunkSize * ramp, maxDownloadChunkSize);
-                }
-            }
-
-            long startRange = nextByteFromApi;
-            long endRange = startRange + chunkSize - 1;
-
-            if (startRange >= readEnd) {
-                return -1;
-            }
-
-            // Request more data to buffer
-            if (unreadBytes == null || unreadBytes.available() == 0) {
-                unreadBytes = new ByteArrayInputStream(partDownloadRequest(apiResponse.url, startRange, endRange));
-            }
-
-            assert (unreadBytes != null && unreadBytes.available() > 0);
-            int bytesToRead = Math.min(numBytes, unreadBytes.available());
-            unreadBytes.read(b, off, bytesToRead);
-
-            // Increment byte range from request for next chunk of data to buffer
-            if (unreadBytes.available() == 0) {
-                nextByteFromApi = endRange + 1;
-                request++;
-            }
-            return bytesToRead;
-        }
     }
 
     /**
