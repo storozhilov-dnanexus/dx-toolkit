@@ -151,7 +151,7 @@ public class DXFile extends DXDataObject {
         @JsonProperty
         private String media;
         @JsonProperty
-        private long size;
+        private Long size;
 
         private Describe() {
             super();
@@ -173,8 +173,9 @@ public class DXFile extends DXDataObject {
          *
          * @return size of file
          */
-        public long getSize() {
-            Preconditions.checkState(this.size >= 0, "file size is not valid");
+        public Long getSize() {
+            Preconditions.checkState(this.size != null,
+                    "file size is not accessible because it was not retrieved with the describe call");
             return size;
         }
     }
@@ -235,6 +236,9 @@ public class DXFile extends DXDataObject {
             long endRange = startRange + chunkSize - 1;
 
             if (startRange >= readEnd) {
+                if (numBytes == 0) {
+                    return 0;
+                }
                 return -1;
             }
 
@@ -255,6 +259,7 @@ public class DXFile extends DXDataObject {
                 nextByteFromApi = endRange + 1;
                 request++;
             }
+
             return bytesToRead;
         }
     }
@@ -424,8 +429,7 @@ public class DXFile extends DXDataObject {
      * @return byte array containing the part of the file contents that is downloaded
      *
      * @throws ClientProtocolException HTTP request to the download URL cannot be executed
-     * @throws IOException unable to get file contents from HTTP response, or file contents cannot
-     *         be cast into a byte array
+     * @throws IOException unable to get file contents from HTTP response
      */
     private static byte[] partDownloadRequest(String url, long start, long end)
             throws ClientProtocolException, IOException {
@@ -442,19 +446,11 @@ public class DXFile extends DXDataObject {
         return IOUtils.toByteArray(content);
     }
 
-    // Maximum size of the part to be downloaded
     private final int maxDownloadChunkSize = 16 * 1024 * 1024;
-
-    // Minimum size of the part to be downloaded
     private final int minDownloadChunkSize = 64 * 1024;
     private final int numRequestsBetweenRamp = 4;
-
     // Ramp up factor for downloading by parts
     private final int ramp = 2;
-
-    // Size of the part to be uploaded
-    @VisibleForTesting
-    int uploadChunkSize = 16 * 1024 * 1024;
 
     private DXFile(String fileId, DXContainer project, DXEnvironment env, JsonNode describe) {
         super(fileId, "file", project, env, describe);
@@ -491,7 +487,7 @@ public class DXFile extends DXDataObject {
      * Downloads the entire file into a byte array.
      *
      * @return byte array containing file contents
-     * @throws IOException downloaded contents cannot be cast into a byte array
+     * @throws IOException if an error occurs while downloading the data
      */
     public byte[] downloadBytes() throws IOException {
         return downloadBytes(0, describe().getSize());
@@ -507,11 +503,11 @@ public class DXFile extends DXDataObject {
      *        (not included in the range).
      *
      * @return byte array containing file contents within range specified
-     * @throws IOException downloaded contents cannot be cast into a byte array
+     * @throws IOException if an error occurs while downloading the data
      */
     public byte[] downloadBytes(long start, long end) throws IOException {
-        Preconditions.checkState(describe().getSize() <= (long) 2 * 1024 * 1024 * 1024,
-                "File larger than 2GB cannot be downloaded with downloadBytes");
+        Preconditions.checkState(end - start <= (long) 2 * 1024 * 1024 * 1024,
+                "Range of file larger than 2GB cannot be downloaded with downloadBytes");
         InputStream is = downloadStream(start, end);
 
         return IOUtils.toByteArray(is);
@@ -545,8 +541,9 @@ public class DXFile extends DXDataObject {
      * Downloads the entire file and writes the data to an OutputStream.
      *
      * @param os output stream downloaded file contents are written into
+     * @throws IOException
      */
-    public void downloadToOutputStream(OutputStream os) {
+    public void downloadToOutputStream(OutputStream os) throws IOException {
         downloadToOutputStream(os, 0, describe().getSize());
     }
 
@@ -561,13 +558,10 @@ public class DXFile extends DXDataObject {
      *
      * @throws IOException
      */
-    public void downloadToOutputStream(OutputStream os, long start, long end) {
+    public void downloadToOutputStream(OutputStream os, long start, long end) throws IOException {
         InputStream is = downloadStream(start, end);
-        try {
-            IOUtils.copyLarge(is, os);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        IOUtils.copyLarge(is, os);
+
     }
 
     @Override
@@ -640,8 +634,8 @@ public class DXFile extends DXDataObject {
     }
 
     /**
-     * Uploads data from the specified stream to the file. <b>This implementation buffers the
-     * data in-memory before being uploaded to the server; therefore, the data must be small.</b>
+     * Uploads data from the specified stream to the file. <b>This implementation buffers the data
+     * in-memory before being uploaded to the server; therefore, the data must be small.</b>
      *
      * <p>
      * The file must be in the "open" state. This method assumes exclusive access to the file: the

@@ -33,7 +33,6 @@ import org.junit.rules.ExpectedException;
 import com.dnanexus.DXDataObject.DescribeOptions;
 import com.dnanexus.DXFile.Builder;
 import com.dnanexus.DXFile.Describe;
-import com.dnanexus.exceptions.InvalidStateException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
 
@@ -148,7 +147,7 @@ public class DXFileTest {
 
         // Nothing uploaded to the file
         // The file cannot be downloaded because it is not in the 'closed' state
-        thrown.expect(InvalidStateException.class);
+        thrown.expect(IllegalStateException.class);
         f.downloadBytes();
     }
 
@@ -206,6 +205,37 @@ public class DXFileTest {
         is.read(bytesFromDownloadStream, 4 * 64 * 1024, 2 * 64 * 1024);
 
         Assert.assertArrayEquals(uploadBytes, bytesFromDownloadStream);
+    }
+
+    @Test
+    public void testDownloadReadReturnsCorrectValue() throws IOException {
+        byte[] uploadBytes = new byte[64 * 1024];
+        new Random().nextBytes(uploadBytes);
+        DXFile f = DXFile.newFile().setProject(testProject).build();
+        f.upload(uploadBytes);
+        f.closeAndWait();
+
+        byte[] bytesFromDownloadStream = new byte[64 * 1024];
+        InputStream is = f.downloadStream();
+        // read => 32 kb
+        int value = is.read(bytesFromDownloadStream, 0, 32 * 1024);
+        Assert.assertEquals(32 * 1024, value);
+
+        // read => 0 bytes
+        value = is.read(bytesFromDownloadStream, 32 * 1024, 0);
+        Assert.assertEquals(0, value);
+
+        // read => 32 kb
+        value = is.read(bytesFromDownloadStream, 32 * 1024, 32 * 1024);
+        Assert.assertEquals(32 * 1024, value);
+
+        // read => 0 bytes
+        value = is.read(bytesFromDownloadStream, 64 * 1024, 0);
+        Assert.assertEquals(0, value);
+
+        // end of file
+        value = is.read(bytesFromDownloadStream, 0, 64 * 1024);
+        Assert.assertEquals(-1, value);
     }
 
     @Test
@@ -284,6 +314,22 @@ public class DXFileTest {
 
         // Upload stream
         InputStream uploadStream = IOUtils.toInputStream(uploadData);
+
+        f = DXFile.newFile().setProject(testProject).upload(uploadStream).build().closeAndWait();
+        downloadBytes = f.downloadBytes();
+
+        Assert.assertArrayEquals(uploadBytes, downloadBytes);
+
+        // Upload bytes with empty string
+        uploadBytes = new byte[0];
+
+        f = DXFile.newFile().setProject(testProject).upload(uploadBytes).build().closeAndWait();
+        downloadBytes = f.downloadBytes();
+
+        Assert.assertArrayEquals(uploadBytes, downloadBytes);
+
+        // Upload stream with empty string
+        uploadStream = new ByteArrayInputStream(uploadBytes);
 
         f = DXFile.newFile().setProject(testProject).upload(uploadStream).build().closeAndWait();
         downloadBytes = f.downloadBytes();
