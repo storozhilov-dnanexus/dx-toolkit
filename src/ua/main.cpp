@@ -27,7 +27,7 @@
 
 #ifdef WINDOWS_BUILD
 #include <windows.h>
-#include <Psapi.h>
+#include <psapi.h>
 #else
 #include <unistd.h>
 #endif
@@ -181,6 +181,11 @@ long getRSS() {
 #ifdef WINDOWS_BUILD
   PROCESS_MEMORY_COUNTERS info;
   GetProcessMemoryInfo( GetCurrentProcess( ), &info, sizeof(info) );
+  DWORD err = GetLastError();
+  if (err != 0 ) {
+    DXLOG(logWARNING) << "Unable to get process' memory usage, error code " << err;
+      return 0;
+  }    
   return (long)info.WorkingSetSize;
 #else
   ifstream statStream("/proc/self/statm",ios_base::in);
