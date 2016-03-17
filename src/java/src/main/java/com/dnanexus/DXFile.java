@@ -190,6 +190,10 @@ public class DXFile extends DXDataObject {
         private ByteArrayInputStream unreadBytes;
 
         private FileApiInputStream(long readStart, long readEnd) {
+            if (readEnd != -1) {
+                Preconditions.checkArgument(readEnd >= readStart, "The start byte cannot be larger than the end byte");
+            }
+
             this.readEnd = readEnd;
             this.nextByteFromApi = readStart;
 
@@ -491,7 +495,14 @@ public class DXFile extends DXDataObject {
      * @throws IOException if an error occurs while downloading the data
      */
     public byte[] downloadBytes() throws IOException {
-        return downloadBytes(0, describe().getSize());
+        long fileEnd;
+        try {
+            fileEnd = describe().getSize();
+        } catch (IllegalStateException e) {
+            // If file was not closed from upload
+            fileEnd = -1;
+        }
+        return downloadBytes(0, fileEnd);
     }
 
     /**
@@ -520,7 +531,14 @@ public class DXFile extends DXDataObject {
      * @return stream containing file contents
      */
     public InputStream downloadStream() {
-        return downloadStream(0, describe().getSize());
+        long fileEnd;
+        try {
+            fileEnd = describe().getSize();
+        } catch (IllegalStateException e) {
+            // If file was not closed from upload
+            fileEnd = -1;
+        }
+        return downloadStream(0, fileEnd);
     }
 
     /**
@@ -534,7 +552,6 @@ public class DXFile extends DXDataObject {
      * @return stream containing file contents within range specified
      */
     public InputStream downloadStream(long start, long end) {
-        Preconditions.checkArgument(end >= start, "The start byte cannot be larger than the end byte");
         return new FileApiInputStream(start, end);
     }
 

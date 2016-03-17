@@ -33,6 +33,7 @@ import org.junit.rules.ExpectedException;
 import com.dnanexus.DXDataObject.DescribeOptions;
 import com.dnanexus.DXFile.Builder;
 import com.dnanexus.DXFile.Describe;
+import com.dnanexus.exceptions.InvalidStateException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
 
@@ -147,7 +148,7 @@ public class DXFileTest {
 
         // Nothing uploaded to the file
         // The file cannot be downloaded because it is not in the 'closed' state
-        thrown.expect(IllegalStateException.class);
+        thrown.expect(InvalidStateException.class);
         f.downloadBytes();
     }
 
