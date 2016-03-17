@@ -173,7 +173,6 @@ public class DXFile extends DXDataObject {
         }
     }
 
-
     private class FileApiOutputStream extends OutputStream {
         private int index = 1;
 
@@ -461,6 +460,7 @@ public class DXFile extends DXDataObject {
         } catch (JsonProcessingException e) {
             throw new RuntimeException(e);
         }
+
 
         // Check that the content-length received by the apiserver is the same
         // as the length of the data
