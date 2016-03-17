@@ -185,70 +185,8 @@ public class DXFile extends DXDataObject {
     }
 
 
-    // Size of the part to be uploaded
-    @VisibleForTesting
-    int uploadChunkSize = 16 * 1024 * 1024;
-
-    /**
-     * Uploads data to the server in an OutputStream
-     *
-     * @return OutputStream to which file contents are written
-     */
-    public OutputStream upload() {
-        return new FileApiOutputStream();
-    }
-
-    /**
-     * Uploads data from the specified byte array to the file.
-     *
-     * <p>
-     * The file must be in the "open" state. This method assumes exclusive access to the file: the
-     * file must have no parts uploaded before this call is made, and no other clients may upload
-     * data to the same file concurrently.
-     * </p>
-     *
-     * @param data data in bytes to be uploaded
-     *
-     * @throws IOException if an error occurs while uploading the data
-     */
-    public void upload(byte[] data) throws IOException {
-        Preconditions.checkNotNull(data, "data may not be null");
-        OutputStream os = upload();
-
-        int startRange = 0;
-        while (startRange <= data.length) {
-            os.write(data, startRange, uploadChunkSize);
-            startRange += uploadChunkSize;
-        }
-    }
-
-    /**
-     * Uploads data from the specified stream to the file.
-     *
-     * * <p>
-     * The file must be in the "open" state. This method assumes exclusive access to the file: the
-     * file must have no parts uploaded before this call is made, and no other clients may upload
-     * data to the same file concurrently.
-     * </p>
-     *
-     * @param data stream containing data to be uploaded
-     *
-     * @throws IOException if an error occurs while uploading the data
-     */
-    public void upload(InputStream data) throws IOException {
-        Preconditions.checkNotNull(data, "data may not be null");
-        upload(IOUtils.toByteArray(data));
-    }
-
     private class FileApiOutputStream extends OutputStream {
         private int index = 1;
-
-        @Override
-        public void write(int b) throws IOException {
-            byte[] b2 = new byte[1];
-            b2[0] = (byte) b;
-            write(b2);
-        }
 
         @Override
         public void write(byte[] b) throws IOException {
@@ -259,6 +197,13 @@ public class DXFile extends DXDataObject {
         public void write(byte[] b, int off, int numBytes) throws IOException {
             partUploadRequest(Arrays.copyOfRange(b , off, Math.min(off + numBytes, b.length)), index);
             index++;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            byte[] b2 = new byte[1];
+            b2[0] = (byte) b;
+            write(b2);
         }
     }
 
@@ -418,6 +363,10 @@ public class DXFile extends DXDataObject {
         return new Builder(env);
     }
 
+    // Size of the part to be uploaded
+    @VisibleForTesting
+    int uploadChunkSize = 16 * 1024 * 1024;
+
     private DXFile(String fileId, DXContainer project, DXEnvironment env, JsonNode describe) {
         super(fileId, "file", project, env, describe);
     }
@@ -524,7 +473,6 @@ public class DXFile extends DXDataObject {
             throw new RuntimeException(e);
         }
 
-
         // Check that the content-length received by the apiserver is the same
         // as the length of the data
         if (apiResponse.headers.containsKey("content-length")) {
@@ -555,5 +503,56 @@ public class DXFile extends DXDataObject {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /**
+     * Uploads data to the server in an OutputStream
+     *
+     * @return OutputStream to which file contents are written
+     */
+    public OutputStream upload() {
+        return new FileApiOutputStream();
+    }
+
+    /**
+     * Uploads data from the specified byte array to the file.
+     *
+     * <p>
+     * The file must be in the "open" state. This method assumes exclusive access to the file: the
+     * file must have no parts uploaded before this call is made, and no other clients may upload
+     * data to the same file concurrently.
+     * </p>
+     *
+     * @param data data in bytes to be uploaded
+     *
+     * @throws IOException if an error occurs while uploading the data
+     */
+    public void upload(byte[] data) throws IOException {
+        Preconditions.checkNotNull(data, "data may not be null");
+        OutputStream os = upload();
+
+        int startRange = 0;
+        while (startRange <= data.length) {
+            os.write(data, startRange, uploadChunkSize);
+            startRange += uploadChunkSize;
+        }
+    }
+
+    /**
+     * Uploads data from the specified stream to the file.
+     *
+     * * <p>
+     * The file must be in the "open" state. This method assumes exclusive access to the file: the
+     * file must have no parts uploaded before this call is made, and no other clients may upload
+     * data to the same file concurrently.
+     * </p>
+     *
+     * @param data stream containing data to be uploaded
+     *
+     * @throws IOException if an error occurs while uploading the data
+     */
+    public void upload(InputStream data) throws IOException {
+        Preconditions.checkNotNull(data, "data may not be null");
+        upload(IOUtils.toByteArray(data));
     }
 }

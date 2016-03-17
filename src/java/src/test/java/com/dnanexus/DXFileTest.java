@@ -58,6 +58,21 @@ public class DXFileTest {
     }
 
     @Test
+    public void testBuilder() {
+        DXDataObjectTest.testBuilder(testProject,
+                new DXDataObjectTest.BuilderFactory<DXFile.Builder, DXFile>() {
+                    @Override
+                    public DXFile.Builder getBuilder() {
+                        return DXFile.newFile();
+                    }
+                });
+
+        DXFile file =
+                DXFile.newFile().setProject(testProject).setMediaType("application/json").build();
+        Assert.assertEquals("application/json", file.describe().getMediaType());
+    }
+
+    @Test
     public void testCreateFileSerialization() throws IOException {
         Assert.assertEquals(
                 DXJSON.parseJson("{\"project\":\"project-000011112222333344445555\", \"name\": \"foo\", \"media\": \"application/json\"}"),
@@ -169,22 +184,6 @@ public class DXFileTest {
     }
 
     @Test
-    public void testUploadChunks() throws IOException {
-        // Upload 7mb
-        byte[] uploadBytes = new byte[7 * 1024 * 1024];
-        new Random().nextBytes(uploadBytes);
-
-        DXFile f = DXFile.newFile().setProject(testProject).build();
-        // Max chunk size 5mb
-        f.uploadChunkSize = 5 * 1024 * 1024;
-        f.upload(uploadBytes);
-        f.closeAndWait();
-        byte[] downloadBytes = f.downloadBytes();
-
-        Assert.assertArrayEquals(uploadBytes, downloadBytes);
-    }
-
-    @Test
     public void testUploadBytesDownloadBytes() throws IOException {
         // With string data
         String uploadData = "Test";
@@ -199,6 +198,22 @@ public class DXFileTest {
 
         // Download again
         downloadBytes = f.downloadBytes();
+        Assert.assertArrayEquals(uploadBytes, downloadBytes);
+    }
+
+    @Test
+    public void testUploadChunks() throws IOException {
+        // Upload 7mb
+        byte[] uploadBytes = new byte[7 * 1024 * 1024];
+        new Random().nextBytes(uploadBytes);
+
+        DXFile f = DXFile.newFile().setProject(testProject).build();
+        // Max chunk size 5mb
+        f.uploadChunkSize = 5 * 1024 * 1024;
+        f.upload(uploadBytes);
+        f.closeAndWait();
+        byte[] downloadBytes = f.downloadBytes();
+
         Assert.assertArrayEquals(uploadBytes, downloadBytes);
     }
 
@@ -327,20 +342,5 @@ public class DXFileTest {
         bytesFromDownloadStream = IOUtils.toByteArray(f.downloadStream());
 
         Assert.assertArrayEquals(uploadBytes, bytesFromDownloadStream);
-    }
-
-    @Test
-    public void testBuilder() {
-        DXDataObjectTest.testBuilder(testProject,
-                new DXDataObjectTest.BuilderFactory<DXFile.Builder, DXFile>() {
-                    @Override
-                    public DXFile.Builder getBuilder() {
-                        return DXFile.newFile();
-                    }
-                });
-
-        DXFile file =
-                DXFile.newFile().setProject(testProject).setMediaType("application/json").build();
-        Assert.assertEquals("application/json", file.describe().getMediaType());
     }
 }
