@@ -190,13 +190,6 @@ public class DXFile extends DXDataObject {
         private ByteArrayInputStream unreadBytes;
 
         private FileApiInputStream(long readStart, long readEnd) {
-            if (readEnd != -1) {
-                Preconditions.checkArgument(readEnd >= readStart, "The start byte cannot be larger than the end byte");
-            }
-
-            this.readEnd = readEnd;
-            this.nextByteFromApi = readStart;
-
             // API call returns URL and headers for HTTP GET requests
             JsonNode output = apiCallOnObject("download", MAPPER.valueToTree(new FileDownloadRequest(true)),
                     RetryStrategy.SAFE_TO_RETRY);
@@ -205,6 +198,13 @@ public class DXFile extends DXDataObject {
             } catch (JsonProcessingException e) {
                 throw new RuntimeException(e);
             }
+
+            if (readEnd == -1) {
+                readEnd = describe().getSize();
+            }
+            Preconditions.checkArgument(readEnd >= readStart, "The start byte cannot be larger than the end byte");
+            this.readEnd = readEnd;
+            this.nextByteFromApi = readStart;
         }
 
         @Override
@@ -495,14 +495,8 @@ public class DXFile extends DXDataObject {
      * @throws IOException if an error occurs while downloading the data
      */
     public byte[] downloadBytes() throws IOException {
-        long fileEnd;
-        try {
-            fileEnd = describe().getSize();
-        } catch (IllegalStateException e) {
-            // If file was not closed from upload
-            fileEnd = -1;
-        }
-        return downloadBytes(0, fileEnd);
+        // -1 indicates the end of the file
+        return downloadBytes(0, -1);
     }
 
     /**
@@ -512,7 +506,7 @@ public class DXFile extends DXDataObject {
      * @param start first byte of the range within the file to be downloaded. The start byte is
      *        inclusive in the range, and 0 is indexed as the first byte in the file.
      * @param end last byte of the range within the file to be downloaded. The end byte is exclusive
-     *        (not included in the range).
+     *        (not included in the range). An input of -1 specifies the end of the file.
      *
      * @return byte array containing file contents within range specified
      * @throws IOException if an error occurs while downloading the data
@@ -531,14 +525,8 @@ public class DXFile extends DXDataObject {
      * @return stream containing file contents
      */
     public InputStream downloadStream() {
-        long fileEnd;
-        try {
-            fileEnd = describe().getSize();
-        } catch (IllegalStateException e) {
-            // If file was not closed from upload
-            fileEnd = -1;
-        }
-        return downloadStream(0, fileEnd);
+        // -1 indicates the end of the file
+        return downloadStream(0, -1);
     }
 
     /**
@@ -547,7 +535,7 @@ public class DXFile extends DXDataObject {
      * @param start first byte of the range within the file to be downloaded. The start byte is
      *        inclusive in the range, and 0 is indexed as the first byte in the file.
      * @param end last byte of the range within the file to be downloaded. The end byte is exclusive
-     *        (not included in the range).
+     *        (not included in the range). An input of -1 specifies the end of the file.
      *
      * @return stream containing file contents within range specified
      */
@@ -572,7 +560,7 @@ public class DXFile extends DXDataObject {
      * @param start first byte of the range within the file to be downloaded. The start byte is
      *        inclusive in the range, and 0 is indexed as the first byte in the file.
      * @param end last byte of the range within the file to be downloaded. The end byte is exclusive
-     *        (not included in the range).
+     *        (not included in the range). An input of -1 specifies the end of the file.
      *
      * @throws IOException
      */
