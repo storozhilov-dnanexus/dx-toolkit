@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-# Copyright (C) 2013-2015 DNAnexus, Inc.
+# Copyright (C) 2013-2016 DNAnexus, Inc.
 #
 # This file is part of dx-toolkit (DNAnexus platform client libraries).
 #
@@ -193,6 +193,10 @@ class TestDXClient(DXTestCase):
     def test_dx_version(self):
         version = run("dx --version")
         self.assertIn("dx", version)
+
+    def test_dx_debug_request_id(self):
+        (stdout, stderr) = run("_DX_DEBUG=1 dx ls", also_return_stderr=True)
+        self.assertRegexpMatches(stderr, "POST \d{13}-\d{1,6} http", msg="stderr does not appear to contain request ID")
 
     def test_dx_actions(self):
         with self.assertRaises(subprocess.CalledProcessError):
@@ -3710,6 +3714,20 @@ class TestDXClientFind(DXTestCase):
         # Empty string values should be okay
         run("dx find projects --property bar=")
 
+    def test_dx_find_projects_phi(self):
+        projectName = "tempProject+{t}".format(t=time.time())
+        with temporary_project(name=projectName) as project_1:
+            res = run('dx find projects --phi true --brief --name ' + pipes.quote(projectName))
+            self.assertTrue(len(res) == 0, "Expected no PHI projects to be found")
+
+            res = run('dx find projects --phi false --brief --name ' + pipes.quote(projectName)).strip().split('\n')
+            self.assertTrue(len(res) == 1, "Expected to find one project")
+            self.assertTrue(res[0] == project_1.get_id())
+
+            # --phi must contain one argument.
+            with self.assertSubprocessFailure(stderr_regexp='expected one argument', exit_code=2):
+                run('dx find projects --phi')
+
     @unittest.skipUnless(testutil.TEST_RUN_JOBS,
                          'skipping tests that would run jobs')
     def test_dx_find_jobs_by_tags_and_properties(self):
@@ -4014,6 +4032,10 @@ class TestDXClientFindInOrg(DXTestCase):
         with self.assertSubprocessFailure(stderr_regexp='not allowed with argument', exit_code=2):
             run(cmd.format(opts="--public-only --private-only"))
 
+        # --phi must contain one argument.
+        with self.assertSubprocessFailure(stderr_regexp='expected one argument', exit_code=2):
+            run(cmd.format(opts="--phi"))
+
     def test_dx_find_org_projects(self):
         with temporary_project() as project_1, temporary_project() as project_2:
             project1_id = project_1.get_id()
@@ -4153,6 +4175,20 @@ class TestDXClientFindInOrg(DXTestCase):
                      "public": True,
                      "describe": dxpy.api.project_describe(self.project_ppb)}]
         self.assertEqual(output, expected)
+
+    def test_dx_find_org_projects_phi(self):
+        projectName = "tempProject+{t}".format(t=time.time())
+        with temporary_project(name=projectName) as project_1:
+            project1_id = project_1.get_id()
+            dxpy.api.project_update(project1_id, {"billTo": self.org_id})
+
+            res = run('dx find org projects org-piratelabs --phi true --brief --name ' + pipes.quote(projectName))
+            self.assertTrue(len(res) == 0, "Expected no PHI projects to be found")
+
+            res = run('dx find org projects org-piratelabs --phi false --brief --name ' + pipes.quote(projectName)).strip().split("\n")
+
+            self.assertTrue(len(res) == 1, "Expected to find one project")
+            self.assertEqual(res[0], project1_id)
 
 
 @unittest.skipUnless(testutil.TEST_ISOLATED_ENV, 'skipping tests that require org creation')
@@ -6627,6 +6663,7 @@ class TestDXGetExecutables(DXTestCase):
 
             output_json = json.load(open(os.path.join("get_applet", "dxapp.json")))
             self.assertEqual(output_app_spec, output_json)
+            self.assertNotIn("bundledDepends", output_json["runSpec"])
 
             self.assertEqual("Description\n", open(os.path.join("get_applet", "Readme.md")).read())
             self.assertEqual("Developer notes\n",
@@ -6689,6 +6726,46 @@ class TestDXGetExecutables(DXTestCase):
             run("dx get --overwrite -o destfile get_applet")
             self.assertTrue(os.path.exists("destfile"))
             self.assertTrue(os.path.exists(os.path.join("destfile", "dxapp.json")))
+
+    def test_get_applet_omit_resources(self):
+        # TODO: not sure why self.assertEqual doesn't consider
+        # assertEqual to pass unless the strings here are unicode strings
+        app_spec = {
+            "name": "get_applet",
+            "dxapi": "1.0.0",
+            "runSpec": {"file": "code.py", "interpreter": "python2.7"},
+            "inputSpec": [{"name": "in1", "class": "file"}],
+            "outputSpec": [{"name": "out1", "class": "file"}],
+            "description": "Description\n",
+            "developerNotes": "Developer notes\n",
+            "types": ["Foo"],
+            "tags": ["bar"],
+            "properties": {"sample_id": "123456"},
+            "details": {"key1": "value1"},
+            }
+        # description and developerNotes should be un-inlined back to files
+        output_app_spec = dict((k, v) for (k, v) in app_spec.iteritems() if k not in ('description',
+                                                                                      'developerNotes'))
+        output_app_spec["runSpec"] = {"file": "src/code.py", "interpreter": "python2.7"}
+
+        app_dir = self.write_app_directory("get_åpplet", json.dumps(app_spec), "code.py",
+                                           code_content="import os\n")
+        os.mkdir(os.path.join(app_dir, "resources"))
+        with open(os.path.join(app_dir, "resources", "resources_file"), 'w') as f:
+            f.write('content\n')
+        new_applet_id = json.loads(run("dx build --json " + app_dir))["id"]
+        with chdir(tempfile.mkdtemp()):
+            run("dx get --omit-resources " + new_applet_id)
+            self.assertFalse(os.path.exists(os.path.join("get_applet", "resources")))
+
+            output_json = json.load(open(os.path.join("get_applet", "dxapp.json")))
+            self.assertIn("bundledDepends", output_json["runSpec"])
+            seenResources = False
+            for bd in output_json["runSpec"]["bundledDepends"]:
+                if bd["name"] == "resources.tar.gz":
+                    seenResources = True
+                    break
+            self.assertTrue(seenResources)
 
     def test_get_applet_field_cleanup(self):
         # TODO: not sure why self.assertEqual doesn't consider
@@ -6804,6 +6881,60 @@ class TestDXGetExecutables(DXTestCase):
                                                  json.dumps({"openSource": False})))
             with self.assertSubprocessFailure(stderr_regexp='can only call.*\n'):
                 run("dx get " + new_app_id)
+
+    @unittest.skipUnless(testutil.TEST_ISOLATED_ENV, 'skipping test that would create apps')
+    def test_get_app_omit_resources(self):
+        self.maxDiff = None
+        app_spec = {
+            "name": "get_app_open_source",
+            "title": "Sir",
+            "dxapi": "1.0.0",
+            "runSpec": {"file": "code.py", "interpreter": "python2.7"},
+            "inputSpec": [{"name": "in1", "class": "file"}],
+            "outputSpec": [{"name": "out1", "class": "file"}],
+            "description": "Description\n",
+            "developerNotes": "Developer notes\n",
+            "openSource": True,
+            "version": "0.0.1"
+            }
+        # description and developerNotes should be un-inlined back to files
+        output_app_spec = dict((k, v)
+                               for (k, v) in app_spec.iteritems()
+                               if k not in ('description', 'developerNotes'))
+        output_app_spec["runSpec"] = {"file": "src/code.py", "interpreter": "python2.7"}
+
+        app_dir = self.write_app_directory("get_app_open_source",
+                                           json.dumps(app_spec),
+                                           "code.py",
+                                           code_content="import os\n")
+        os.mkdir(os.path.join(app_dir, "resources"))
+        with open(os.path.join(app_dir, "resources", "resources_file"), 'w') as f:
+            f.write('content\n')
+        new_app_json = json.loads(run("dx build --create-app --json " + app_dir))
+        new_app_id = new_app_json["id"]
+        # app_describe = json.loads(run("dx describe --json " + new_app_json["id"]))
+        app_describe = dxpy.api.app_describe(new_app_json["id"])
+
+        self.assertEqual(app_describe["class"], "app")
+        self.assertEqual(app_describe["version"], "0.0.1")
+        self.assertEqual(app_describe["name"], "get_app_open_source")
+        self.assertFalse("published" in app_describe)
+        self.assertTrue(os.path.exists(os.path.join(app_dir, 'code.py')))
+        self.assertFalse(os.path.exists(os.path.join(app_dir, 'code.pyc')))
+
+        with chdir(tempfile.mkdtemp()):
+            run("dx get --omit-resources " + new_app_id)
+            self.assertFalse(os.path.exists(os.path.join("get_app_open_source", "resources")))
+
+            output_json = json.load(open(os.path.join("get_app_open_source", "dxapp.json")))
+            self.assertTrue("bundledDepends" in output_json["runSpec"])
+            seenResources = False
+            for bd in output_json["runSpec"]["bundledDepends"]:
+                if bd["name"] == "resources.tar.gz":
+                    seenResources = True
+                    break
+            self.assertTrue(seenResources)
+
 
 
 class TestDXBuildReportHtml(unittest.TestCase):

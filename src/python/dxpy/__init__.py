@@ -1,4 +1,4 @@
-# Copyright (C) 2013-2015 DNAnexus, Inc.
+# Copyright (C) 2013-2016 DNAnexus, Inc.
 #
 # This file is part of dx-toolkit (DNAnexus platform client libraries).
 #
@@ -410,6 +410,7 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
             # throws BadStatusLine if the server returns nothing
             response = _get_pool_manager(**pool_args).request(_method, _url, headers=_headers, body=data,
                                                               timeout=timeout, retries=False, **kwargs)
+            req_id = response.headers.get("x-request-id", "unavailable")
 
             if _UPGRADE_NOTIFY and response.headers.get('x-upgrade-info', '').startswith('A recommended update is available') and '_ARGCOMPLETE' not in os.environ:
                 logger.info(response.headers['x-upgrade-info'])
@@ -436,7 +437,12 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
                     except (KeyError, AttributeError, TypeError):
                         error_class = exceptions.HTTPError
                     raise error_class(content, response.status)
-                raise exceptions.HTTPError("{} {}".format(response.status, response.reason))
+                else:
+                    content = response.data.decode('utf-8')
+                    raise exceptions.HTTPError("{} {} [RequestID={}]\n{}".format(response.status,
+                                                                                 response.reason,
+                                                                                 req_id,
+                                                                                 content))
 
             if want_full_response:
                 return response
@@ -445,8 +451,9 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
                     if int(response.headers['content-length']) != len(response.data):
                         range_str = (' (%s)' % (headers['Range'],)) if 'Range' in headers else ''
                         raise exceptions.ContentLengthError(
-                            "Received response with content-length header set to %s but content length is %d%s" %
-                            (response.headers['content-length'], len(response.data), range_str)
+                            "Received response with content-length header set to %s but content length is %d%s. " +
+                            "[RequestID=%s]" %
+                            (response.headers['content-length'], len(response.data), range_str, req_id)
                         )
 
                 content = response.data
@@ -461,14 +468,15 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
                             raise exceptions.BadJSONInReply("Invalid JSON received from server", response.status)
                         if _DEBUG > 0:
                             t = int((time.time() - time_started) * 1000)
+                            req_id = response.headers.get('x-request-id')
                         if _DEBUG >= 3:
-                            print(method, url, "<=", response.status, "(%dms)" % t,
+                            print(method, req_id, url, "<=", response.status, "(%dms)" % t,
                                   "\n" + json.dumps(content, indent=2), file=sys.stderr)
                         elif _DEBUG == 2:
-                            print(method, url, "<=", response.status, "(%dms)" % t, json.dumps(content),
+                            print(method, req_id, url, "<=", response.status, "(%dms)" % t, json.dumps(content),
                                   file=sys.stderr)
                         elif _DEBUG > 0:
-                            print(method, url, "<=", response.status, "(%dms)" % t, Repr().repr(content),
+                            print(method, req_id, url, "<=", response.status, "(%dms)" % t, Repr().repr(content),
                                   file=sys.stderr)
                 return content
             raise AssertionError('Should never reach this line: expected a result to have been returned by now')
@@ -513,8 +521,9 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
                     if rewind_input_buffer_offset is not None:
                         data.seek(rewind_input_buffer_offset)
                     delay = min(2 ** try_index, DEFAULT_TIMEOUT)
-                    logger.warn("%s %s: %s. Waiting %d seconds before retry %d of %d...",
-                                method, url, exception_msg, delay, try_index + 1, max_retries)
+                    range_str = (' (range=%s)' % (headers['Range'],)) if 'Range' in headers else ''
+                    logger.warn("%s %s: %s. Waiting %d seconds before retry %d of %d... %s",
+                                method, url, exception_msg, delay, try_index + 1, max_retries, range_str)
                     time.sleep(delay)
                     try_index += 1
                     continue

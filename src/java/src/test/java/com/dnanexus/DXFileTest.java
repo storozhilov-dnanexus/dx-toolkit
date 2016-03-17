@@ -17,6 +17,7 @@
 package com.dnanexus;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Random;
@@ -142,13 +143,100 @@ public class DXFileTest {
     }
 
     @Test
-    public void testDownloadFails() {
+    public void testDownloadFails() throws IOException {
         DXFile f = DXFile.newFile().setProject(testProject).build();
 
         // Nothing uploaded to the file
         // The file cannot be downloaded because it is not in the 'closed' state
         thrown.expect(InvalidStateException.class);
         f.downloadBytes();
+    }
+
+    @Test
+    public void testDownloadRamp() throws IOException {
+        // File size is 65536
+        byte[] uploadBytes = new byte[64 * 1024];
+        new Random().nextBytes(uploadBytes);
+
+        DXFile f = DXFile.newFile().setProject(testProject).build();
+        f.upload(uploadBytes);
+        f.closeAndWait();
+
+        byte[] bytesFromDownloadStream = new byte[64 * 1024];
+        InputStream is = f.downloadStream();
+        // read => 65536 bytes
+        is.read(bytesFromDownloadStream, 0, 64 * 1024);
+
+        Assert.assertArrayEquals(uploadBytes, bytesFromDownloadStream);
+
+        // File size is 65537 bytes
+        uploadBytes = new byte[64 * 1024 + 1];
+        new Random().nextBytes(uploadBytes);
+        f = DXFile.newFile().setProject(testProject).build();
+        f.upload(uploadBytes);
+        f.closeAndWait();
+
+        bytesFromDownloadStream = new byte[64 * 1024 + 1];
+        is = f.downloadStream();
+        // read => 65536 bytes
+        is.read(bytesFromDownloadStream, 0, 64 * 1024);
+        // read again => 1 byte
+        is.read(bytesFromDownloadStream, 64 * 1024, 1);
+
+        Assert.assertArrayEquals(uploadBytes, bytesFromDownloadStream);
+
+        // File size is 393216
+        uploadBytes = new byte[393216];
+        new Random().nextBytes(uploadBytes);
+        f = DXFile.newFile().setProject(testProject).build();
+        f.upload(uploadBytes);
+        f.closeAndWait();
+
+        bytesFromDownloadStream = new byte[393216];
+        is = f.downloadStream();
+        // read => 65536 bytes
+        is.read(bytesFromDownloadStream, 0, 64 * 1024);
+        // read again => 65536 bytes
+        is.read(bytesFromDownloadStream, 64 * 1024, 64 * 1024);
+        // read again => 65536 bytes
+        is.read(bytesFromDownloadStream, 2 * 64 * 1024, 64 * 1024);
+        // read again => 65536 bytes
+        is.read(bytesFromDownloadStream, 3 * 64 * 1024, 64 * 1024);
+        // read again => 131072 bytes
+        is.read(bytesFromDownloadStream, 4 * 64 * 1024, 2 * 64 * 1024);
+
+        Assert.assertArrayEquals(uploadBytes, bytesFromDownloadStream);
+    }
+
+    @Test
+    public void testDownloadReadReturnsCorrectValue() throws IOException {
+        byte[] uploadBytes = new byte[64 * 1024];
+        new Random().nextBytes(uploadBytes);
+        DXFile f = DXFile.newFile().setProject(testProject).build();
+        f.upload(uploadBytes);
+        f.closeAndWait();
+
+        byte[] bytesFromDownloadStream = new byte[64 * 1024];
+        InputStream is = f.downloadStream();
+        // read => 32 kb
+        int bytesRead = is.read(bytesFromDownloadStream, 0, 32 * 1024);
+        Assert.assertEquals(32 * 1024, bytesRead);
+
+        // read => 0 bytes
+        bytesRead = is.read(bytesFromDownloadStream, 32 * 1024, 0);
+        Assert.assertEquals(0, bytesRead);
+
+        // read => 32 kb
+        bytesRead = is.read(bytesFromDownloadStream, 32 * 1024, 32 * 1024);
+        Assert.assertEquals(32 * 1024, bytesRead);
+
+        // read => 0 bytes
+        bytesRead = is.read(bytesFromDownloadStream, 64 * 1024, 0);
+        Assert.assertEquals(0, bytesRead);
+
+        // end of file
+        bytesRead = is.read(bytesFromDownloadStream, 0, 64 * 1024);
+        Assert.assertEquals(-1, bytesRead);
     }
 
     @Test
@@ -231,7 +319,7 @@ public class DXFileTest {
     }
 
     @Test
-    public void testUploadDownloadBuilder() {
+    public void testUploadDownloadBuilder() throws IOException {
         // Upload bytes
         String uploadData = "Test";
         byte[] uploadBytes = uploadData.getBytes();
@@ -290,7 +378,6 @@ public class DXFileTest {
         Assert.assertArrayEquals(uploadBytes, bytesFromDownloadStream);
     }
 
-    @Test
     public void testUploadNullBytesBuilderFails() {
         Builder b = DXFile.newFile().setProject(testProject);
         thrown.expect(NullPointerException.class);
@@ -316,6 +403,22 @@ public class DXFileTest {
         DXFile f = DXFile.newFile().setProject(testProject).build();
         thrown.expect(NullPointerException.class);
         f.upload((InputStream) null);
+    }
+
+    @Test
+    public void testUploadStreamDownloadOutputStream() throws IOException {
+        // With string data
+        String uploadData = "Test";
+        InputStream uploadStream = IOUtils.toInputStream(uploadData);
+
+        DXFile f = DXFile.newFile().setProject(testProject).build();
+        f.upload(uploadStream);
+        f.closeAndWait();
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        f.downloadToOutputStream(bos);
+        byte[] bytesFromDownloadStream = bos.toByteArray();
+
+        Assert.assertArrayEquals(uploadData.getBytes(), bytesFromDownloadStream);
     }
 
     @Test

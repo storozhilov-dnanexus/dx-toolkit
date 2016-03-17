@@ -1,4 +1,4 @@
-# Copyright (C) 2013-2015 DNAnexus, Inc.
+# Copyright (C) 2013-2016 DNAnexus, Inc.
 #
 # This file is part of dx-toolkit (DNAnexus platform client libraries).
 #
@@ -276,6 +276,10 @@ tag_args.add_argument('--tag', metavar='TAG', dest='tags',
                            break_on_hyphens=False, initial_indent=' ', subsequent_indent=' '),
                       action='append')
 
+contains_phi = argparse.ArgumentParser(add_help=False)
+contains_phi.add_argument('--phi', dest='containsPHI', choices=["true", "false"],
+                          help='If set to true, only projects that contain PHI data will be retrieved. ' +
+                          'If set to false, only projects that do not contain PHI data will be retrieved.')
 
 def _parse_inst_type(thing):
     if thing.strip().startswith('{'):
@@ -325,3 +329,11 @@ def get_update_project_args(args):
     if args.bill_to is not None:
         input_params["billTo"] = args.bill_to
     return input_params
+
+
+def process_phi_param(args):
+    if args.containsPHI is not None:
+        if args.containsPHI == "true":
+            args.containsPHI = True
+        elif args.containsPHI == "false":
+            args.containsPHI = False
