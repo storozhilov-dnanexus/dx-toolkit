@@ -224,6 +224,10 @@ public class DXFile extends DXDataObject {
                 throw new IndexOutOfBoundsException();
             }
 
+            if (numBytes == 0) {
+                return 0;
+            }
+
             // Ramp up download request size
             if (chunkSize < maxDownloadChunkSize) {
                 if (request > numRequestsBetweenRamp) {
@@ -236,9 +240,6 @@ public class DXFile extends DXDataObject {
             long endRange = startRange + chunkSize - 1;
 
             if (startRange >= readEnd) {
-                if (numBytes == 0) {
-                    return 0;
-                }
                 return -1;
             }
 

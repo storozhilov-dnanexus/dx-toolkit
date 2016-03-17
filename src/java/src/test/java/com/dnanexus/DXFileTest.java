@@ -218,24 +218,24 @@ public class DXFileTest {
         byte[] bytesFromDownloadStream = new byte[64 * 1024];
         InputStream is = f.downloadStream();
         // read => 32 kb
-        int value = is.read(bytesFromDownloadStream, 0, 32 * 1024);
-        Assert.assertEquals(32 * 1024, value);
+        int bytesRead = is.read(bytesFromDownloadStream, 0, 32 * 1024);
+        Assert.assertEquals(32 * 1024, bytesRead);
 
         // read => 0 bytes
-        value = is.read(bytesFromDownloadStream, 32 * 1024, 0);
-        Assert.assertEquals(0, value);
+        bytesRead = is.read(bytesFromDownloadStream, 32 * 1024, 0);
+        Assert.assertEquals(0, bytesRead);
 
         // read => 32 kb
-        value = is.read(bytesFromDownloadStream, 32 * 1024, 32 * 1024);
-        Assert.assertEquals(32 * 1024, value);
+        bytesRead = is.read(bytesFromDownloadStream, 32 * 1024, 32 * 1024);
+        Assert.assertEquals(32 * 1024, bytesRead);
 
         // read => 0 bytes
-        value = is.read(bytesFromDownloadStream, 64 * 1024, 0);
-        Assert.assertEquals(0, value);
+        bytesRead = is.read(bytesFromDownloadStream, 64 * 1024, 0);
+        Assert.assertEquals(0, bytesRead);
 
         // end of file
-        value = is.read(bytesFromDownloadStream, 0, 64 * 1024);
-        Assert.assertEquals(-1, value);
+        bytesRead = is.read(bytesFromDownloadStream, 0, 64 * 1024);
+        Assert.assertEquals(-1, bytesRead);
     }
 
     @Test
