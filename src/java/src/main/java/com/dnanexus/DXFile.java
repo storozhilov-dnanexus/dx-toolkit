@@ -156,20 +156,9 @@ public class DXFile extends DXDataObject {
     public static class Describe extends DXDataObject.Describe {
         @JsonProperty
         private String media;
-        @JsonProperty
-        private long size;
 
         private Describe() {
             super();
-        }
-
-        /**
-         * Returns the size of the file.
-         *
-         * @return size of file
-         */
-        public long getFileSize() {
-            return size;
         }
 
         /**
