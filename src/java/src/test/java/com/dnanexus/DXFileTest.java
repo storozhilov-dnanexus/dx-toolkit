@@ -290,6 +290,22 @@ public class DXFileTest {
     }
 
     @Test
+    public void testUploadChunks() throws IOException {
+        // Upload 7mb
+        byte[] uploadBytes = new byte[7 * 1024 * 1024];
+        new Random().nextBytes(uploadBytes);
+
+        DXFile f = DXFile.newFile().setProject(testProject).build();
+        // Max chunk size 5mb
+        f.uploadChunkSize = 5 * 1024 * 1024;
+        f.upload(uploadBytes);
+        f.closeAndWait();
+        byte[] downloadBytes = f.downloadBytes();
+
+        Assert.assertArrayEquals(uploadBytes, downloadBytes);
+    }
+
+    @Test
     public void testUploadDownloadBinary() throws IOException {
         String uploadData = Integer.toBinaryString(12345678);
         byte[] uploadBytes = uploadData.getBytes();
@@ -362,21 +378,6 @@ public class DXFileTest {
         Assert.assertArrayEquals(uploadBytes, bytesFromDownloadStream);
     }
 
-    @Test
-    public void testUploadDownloadMediumSizeData() throws IOException {
-        // Upload 10mb
-        byte[] uploadBytes = new byte[10 * 1024 * 1024];
-        new Random().nextBytes(uploadBytes);
-
-        DXFile f = DXFile.newFile().setProject(testProject).build();
-        f.upload(uploadBytes);
-        f.closeAndWait();
-        byte[] downloadBytes = f.downloadBytes();
-
-        Assert.assertArrayEquals(uploadBytes, downloadBytes);
-    }
-
-    @Test
     public void testUploadNullBytesBuilderFails() {
         Builder b = DXFile.newFile().setProject(testProject);
         thrown.expect(NullPointerException.class);
@@ -384,10 +385,10 @@ public class DXFileTest {
     }
 
     @Test
-    public void testUploadNullBytesFails() {
+    public void testUploadNullBytesFails() throws IOException {
         DXFile f = DXFile.newFile().setProject(testProject).build();
         thrown.expect(NullPointerException.class);
-        f.upload((byte[]) null);
+        f.upload().write((byte []) null);
     }
 
     @Test
@@ -398,7 +399,7 @@ public class DXFileTest {
     }
 
     @Test
-    public void testUploadNullStreamFails() {
+    public void testUploadNullStreamFails() throws IOException {
         DXFile f = DXFile.newFile().setProject(testProject).build();
         thrown.expect(NullPointerException.class);
         f.upload((InputStream) null);
@@ -433,8 +434,16 @@ public class DXFileTest {
 
         Assert.assertArrayEquals(uploadData.getBytes(), bytesFromDownloadStream);
 
-        // Download again
+        // With larger sized data
+        byte[] uploadBytes = new byte[10 * 1024 * 1024];
+        new Random().nextBytes(uploadBytes);
+
+        f = DXFile.newFile().setProject(testProject).build();
+        f.uploadChunkSize = 7 * 1024 * 1024;
+        f.upload(new ByteArrayInputStream(uploadBytes));
+        f.closeAndWait();
         bytesFromDownloadStream = IOUtils.toByteArray(f.downloadStream());
-        Assert.assertArrayEquals(uploadData.getBytes(), bytesFromDownloadStream);
+
+        Assert.assertArrayEquals(uploadBytes, bytesFromDownloadStream);
     }
 }

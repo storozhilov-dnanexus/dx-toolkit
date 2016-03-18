@@ -20,6 +20,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Arrays;
 import java.util.Map;
 
 import org.apache.commons.codec.digest.DigestUtils;
@@ -42,11 +43,13 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
-import com.google.common.io.ByteStreams;
+
+import junit.framework.Assert;
 
 /**
  * A file (an opaque sequence of bytes).
  */
+@SuppressWarnings("deprecation")
 public class DXFile extends DXDataObject {
 
     /**
@@ -76,7 +79,11 @@ public class DXFile extends DXDataObject {
                     this.project, this.env, null);
 
             if (uploadData != null) {
-                file.upload(uploadData);
+                try {
+                    file.upload(uploadData);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
             }
 
             return file;
@@ -269,6 +276,28 @@ public class DXFile extends DXDataObject {
         }
     }
 
+    private class FileApiOutputStream extends OutputStream {
+        private int index = 1;
+
+        @Override
+        public void write(byte[] b) throws IOException {
+            write(b, 0, b.length);
+        }
+
+        @Override
+        public void write(byte[] b, int off, int numBytes) throws IOException {
+            partUploadRequest(Arrays.copyOfRange(b , off, Math.min(off + numBytes, b.length)), index);
+            index++;
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            byte[] b2 = new byte[1];
+            b2[0] = (byte) b;
+            write(b2);
+        }
+    }
+
     /**
      * Request to /file-xxxx/download.
      */
@@ -310,13 +339,16 @@ public class DXFile extends DXDataObject {
     @JsonInclude(Include.NON_NULL)
     private static class FileUploadRequest {
         @JsonProperty
+        private int index = 1;
+        @JsonProperty
         private String md5;
         @JsonProperty
         private int size;
 
-        private FileUploadRequest(int size, String md5) {
+        private FileUploadRequest(int size, String md5, int index) {
             this.size = size;
             this.md5 = md5;
+            this.index = index;
         }
     }
 
@@ -453,9 +485,11 @@ public class DXFile extends DXDataObject {
 
     private final int maxDownloadChunkSize = 16 * 1024 * 1024;
     private final int minDownloadChunkSize = 64 * 1024;
-    private final int numRequestsBetweenRamp = 4;
     // Ramp up factor for downloading by parts
     private final int ramp = 2;
+    private final int numRequestsBetweenRamp = 4;
+    @VisibleForTesting
+    int uploadChunkSize = 16 * 1024 * 1024;
 
     private DXFile(String fileId, DXContainer project, DXEnvironment env, JsonNode describe) {
         super(fileId, "file", project, env, describe);
@@ -577,26 +611,19 @@ public class DXFile extends DXDataObject {
     }
 
     /**
-     * Uploads data from the specified byte array to the file. <b>This implementation buffers the
-     * data in-memory before being uploaded to the server; therefore, the data must be small.</b>
+     * HTTP PUT request to upload the data part to the server.
      *
-     * <p>
-     * The file must be in the "open" state. This method assumes exclusive access to the file: the
-     * file must have no parts uploaded before this call is made, and no other clients may upload
-     * data to the same file concurrently.
-     * </p>
-     *
-     * @param data data in bytes to be uploaded
+     * @param dataChunk data part that is uploaded
+     * @param index position for which the data lies in the file
      */
-    public void upload(byte[] data) {
-        Preconditions.checkNotNull(data, "data may not be null");
-
+    private void partUploadRequest(byte[] dataChunk, int index) {
         // MD5 digest as 32 character hex string
-        String dataMD5 = DigestUtils.md5Hex(data);
+        String dataMD5 = DigestUtils.md5Hex(dataChunk);
 
         // API call returns URL and headers
-        JsonNode output = apiCallOnObject("upload", MAPPER.valueToTree(new FileUploadRequest(data.length, dataMD5)),
-                RetryStrategy.SAFE_TO_RETRY);
+        JsonNode output =
+                apiCallOnObject("upload", MAPPER.valueToTree(new FileUploadRequest(dataChunk.length, dataMD5, index)),
+                        RetryStrategy.SAFE_TO_RETRY);
 
         FileUploadResponse apiResponse;
         try {
@@ -608,17 +635,15 @@ public class DXFile extends DXDataObject {
         // Check that the content-length received by the apiserver is the same
         // as the length of the data
         if (apiResponse.headers.containsKey("content-length")) {
-            int apiserverContentLength = Integer.parseInt(apiResponse.headers.get("content-length"));
-            if (apiserverContentLength != data.length) {
-                throw new AssertionError(
-                        "Content-length received by the apiserver did not match that of the input data");
-            }
+            Assert.assertEquals("Content-length received by the apiserver did not match that of the input data",
+                    dataChunk.length, Integer.parseInt(apiResponse.headers.get("content-length")));
         }
 
         // HTTP PUT request to upload URL and headers
         HttpPut request = new HttpPut(apiResponse.url);
-        request.setEntity(new ByteArrayEntity(data));
+        request.setEntity(new ByteArrayEntity(dataChunk));
 
+        // Set headers
         for (Map.Entry<String, String> header : apiResponse.headers.entrySet()) {
             String key = header.getKey();
 
@@ -640,8 +665,18 @@ public class DXFile extends DXDataObject {
     }
 
     /**
-     * Uploads data from the specified stream to the file. <b>This implementation buffers the data
-     * in-memory before being uploaded to the server; therefore, the data must be small.</b>
+     * Uploads data to the server in an OutputStream
+     *
+     * @return OutputStream to which file contents are written
+     */
+    public OutputStream upload() {
+        return new FileApiOutputStream();
+    }
+
+    /**
+     * Uploads data from the specified byte array to the file.
+     * Uploads data from the specified stream to the file. <b>This implementation buffers the
+     * data in-memory before being uploaded to the server; therefore, the data must be small.</b>
      *
      * <p>
      * The file must be in the "open" state. This method assumes exclusive access to the file: the
@@ -649,14 +684,36 @@ public class DXFile extends DXDataObject {
      * data to the same file concurrently.
      * </p>
      *
-     * @param data stream containing data to be uploaded
+     * @param data data in bytes to be uploaded
+     *
+     * @throws IOException if an error occurs while uploading the data
      */
-    public void upload(InputStream data) {
+    public void upload(byte[] data) throws IOException {
         Preconditions.checkNotNull(data, "data may not be null");
-        try {
-            this.upload(ByteStreams.toByteArray(data));
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+        OutputStream os = upload();
+
+        int startRange = 0;
+        while (startRange <= data.length) {
+            os.write(data, startRange, uploadChunkSize);
+            startRange += uploadChunkSize;
         }
+    }
+
+    /**
+     * Uploads data from the specified stream to the file.
+     *
+     * * <p>
+     * The file must be in the "open" state. This method assumes exclusive access to the file: the
+     * file must have no parts uploaded before this call is made, and no other clients may upload
+     * data to the same file concurrently.
+     * </p>
+     *
+     * @param data stream containing data to be uploaded
+     *
+     * @throws IOException if an error occurs while uploading the data
+     */
+    public void upload(InputStream data) throws IOException {
+        Preconditions.checkNotNull(data, "data may not be null");
+        upload(IOUtils.toByteArray(data));
     }
 }
