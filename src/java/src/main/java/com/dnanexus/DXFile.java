@@ -21,6 +21,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Arrays;
 import java.util.Map;
 
 import org.apache.commons.codec.digest.DigestUtils;
@@ -274,6 +275,9 @@ public class DXFile extends DXDataObject {
     }
 
     private class FileApiOutputStream extends OutputStream {
+        private ByteArrayOutputStream unwrittenBytes = new ByteArrayOutputStream();
+        private int index = 1;
+
         @Override
         public void write(byte[] b) throws IOException {
             write(b, 0, b.length);
@@ -281,11 +285,18 @@ public class DXFile extends DXDataObject {
 
         @Override
         public void write(byte[] b, int off, int numBytes) throws IOException {
-            unwrittenBytesBuffer.write(b, 0, numBytes);
-            if (unwrittenBytesBuffer.size() >= uploadChunkSize) {
-                partUploadRequest(unwrittenBytesBuffer.toByteArray(), uploadIndex);
-                unwrittenBytesBuffer = new ByteArrayOutputStream();
-                uploadIndex++;
+            unwrittenBytes.write(b, off, numBytes);
+            if (unwrittenBytes.size() >= uploadChunkSize) {
+                byte[] bytesToWrite = unwrittenBytes.toByteArray();
+                int chunkStart = 0;
+                while (bytesToWrite.length - chunkStart >= uploadChunkSize) {
+                    partUploadRequest(Arrays.copyOfRange(bytesToWrite, chunkStart, chunkStart + uploadChunkSize),
+                            index);
+                    chunkStart += uploadChunkSize;
+                    index++;
+                }
+                unwrittenBytes = new ByteArrayOutputStream();
+                IOUtils.write(Arrays.copyOfRange(bytesToWrite, chunkStart, bytesToWrite.length), unwrittenBytes);
             }
         }
 
@@ -294,6 +305,12 @@ public class DXFile extends DXDataObject {
             byte[] b2 = new byte[1];
             b2[0] = (byte) b;
             write(b2);
+        }
+
+        @Override
+        public void close() {
+            // Flush out remaining bytes to upload
+            partUploadRequest(unwrittenBytes.toByteArray(), index);
         }
     }
     /**
@@ -488,10 +505,8 @@ public class DXFile extends DXDataObject {
     private final int ramp = 2;
 
     // Variables for upload
-    private ByteArrayOutputStream unwrittenBytesBuffer = new ByteArrayOutputStream();
     @VisibleForTesting
     int uploadChunkSize = 16 * 1024 * 1024;
-    private int uploadIndex = 1;
 
     private DXFile(String fileId, DXContainer project, DXEnvironment env, JsonNode describe) {
         super(fileId, "file", project, env, describe);
@@ -509,12 +524,6 @@ public class DXFile extends DXDataObject {
 
     @Override
     public DXFile closeAndWait() {
-        // Flush out remaining bytes to upload
-//        if (unwrittenBytesBuffer.size() > 0) {
-            partUploadRequest(unwrittenBytesBuffer.toByteArray(), uploadIndex);
-            unwrittenBytesBuffer = new ByteArrayOutputStream();
-            uploadIndex = 1;
-//        }
         super.closeAndWait();
         return this;
     }
@@ -704,7 +713,9 @@ public class DXFile extends DXDataObject {
      */
     public void upload(byte[] data) throws IOException {
         Preconditions.checkNotNull(data, "data may not be null");
-        IOUtils.write(data, this.getUploadStream());
+        try (OutputStream uploadOutputStream = this.getUploadStream()) {
+            IOUtils.write(data, uploadOutputStream);
+        }
     }
 
     /**
@@ -722,6 +733,8 @@ public class DXFile extends DXDataObject {
      */
     public void upload(InputStream data) throws IOException {
         Preconditions.checkNotNull(data, "data may not be null");
-        IOUtils.copyLarge(data, this.getUploadStream());
+        try (OutputStream uploadOutputStream = this.getUploadStream()) {
+            IOUtils.copyLarge(data, uploadOutputStream);
+        }
     }
 }

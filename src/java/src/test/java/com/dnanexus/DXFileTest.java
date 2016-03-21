@@ -472,16 +472,28 @@ public class DXFileTest {
 
     @Test
     public void testUploadOutputStreamWrite() throws IOException {
-        byte[] uploadBytes = new byte[5 * 1024];
+        byte[] uploadBytes = new byte[6 * 1024 * 1024];
         new Random().nextBytes(uploadBytes);
 
+        // Write byte by byte directly to OutputStream
         DXFile f = DXFile.newFile().setProject(testProject).build();
         OutputStream os = f.getUploadStream();
         for (int i = 0; i < uploadBytes.length; i++) {
             os.write(uploadBytes[i]);
         }
+        os.close();
         f.closeAndWait();
         byte[] downloadBytes = f.downloadBytes();
+
+        Assert.assertArrayEquals(uploadBytes, downloadBytes);
+
+        // Write byte array directly to OutputStream
+        f = DXFile.newFile().setProject(testProject).build();
+        os = f.getUploadStream();
+        os.write(uploadBytes);
+        os.close();
+        f.closeAndWait();
+        downloadBytes = f.downloadBytes();
 
         Assert.assertArrayEquals(uploadBytes, downloadBytes);
     }
