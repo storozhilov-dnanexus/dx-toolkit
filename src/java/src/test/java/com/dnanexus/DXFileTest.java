@@ -313,6 +313,17 @@ public class DXFileTest {
         downloadBytes = f.downloadBytes();
 
         Assert.assertArrayEquals(uploadBytes, downloadBytes);
+
+        // Upload bytes = upload chunk size
+        uploadBytes = new byte[5 * 1024 * 1024];
+        new Random().nextBytes(uploadBytes);
+        f = DXFile.newFile().setProject(testProject).build();
+        f.uploadChunkSize = 5 * 1024 * 1024;
+        f.upload(new ByteArrayInputStream(uploadBytes));
+        f.closeAndWait();
+        downloadBytes = f.downloadBytes();
+
+        Assert.assertArrayEquals(uploadBytes, downloadBytes);
     }
 
     @Test

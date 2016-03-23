@@ -302,15 +302,16 @@ public class DXFile extends DXDataObject {
 
         @Override
         public void write(int b) throws IOException {
-            byte[] b2 = new byte[1];
-            b2[0] = (byte) b;
-            write(b2);
+            byte[] byteAsArray = new byte[1];
+            byteAsArray[0] = (byte) b;
+            write(byteAsArray);
         }
 
         @Override
-        public void close() {
+        public void close() throws IOException {
             // Flush out remaining bytes to upload
             partUploadRequest(unwrittenBytes.toByteArray(), index);
+            unwrittenBytes = new ByteArrayOutputStream();
         }
     }
     /**
@@ -646,8 +647,9 @@ public class DXFile extends DXDataObject {
      *
      * @param dataChunk data part that is uploaded
      * @param index position for which the data lies in the file
+     * @throws IOException if unable to execute HTTP request
      */
-    private void partUploadRequest(byte[] dataChunk, int index) {
+    private void partUploadRequest(byte[] dataChunk, int index) throws IOException {
         // MD5 digest as 32 character hex string
         String dataMD5 = DigestUtils.md5Hex(dataChunk);
 
@@ -691,11 +693,8 @@ public class DXFile extends DXDataObject {
         }
 
         HttpClient httpclient = HttpClientBuilder.create().setUserAgent(USER_AGENT).build();
-        try {
-            httpclient.execute(request);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        httpclient.execute(request);
+
     }
 
     /**
