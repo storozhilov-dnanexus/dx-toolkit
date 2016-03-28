@@ -332,8 +332,8 @@ def _extract_retry_after_timeout(response):
     return max(1, seconds_to_wait)
 
 
-def _body_send_recv_req(pool, method, url, headers, data, timeout, want_full_response,
-                        decode_response_body, kwargs):
+def _body_send_recv_req(pool, method, url, headers, data, timeout,
+                        want_full_response, decode_response_body, kwargs):
     global _UPGRADE_NOTIFY
     time_started = None
     if _DEBUG > 0:
@@ -341,7 +341,7 @@ def _body_send_recv_req(pool, method, url, headers, data, timeout, want_full_res
     _method, _url, _headers = _process_method_url_headers(method, url, headers)
 
     # throws BadStatusLine if the server returns nothing
-    response = pool.request(method, url, headers=headers, body=data,
+    response = pool.request(_method, _url, headers=_headers, body=data,
                             timeout=timeout, retries=False, **kwargs)
     req_id = response.headers.get("x-request-id", "unavailable")
 
@@ -378,7 +378,7 @@ def _body_send_recv_req(pool, method, url, headers, data, timeout, want_full_res
                                                                          content))
 
     if want_full_response:
-        return response
+        return (response,response)
     else:
         if 'content-length' in response.headers:
             if int(response.headers['content-length']) != len(response.data):
@@ -411,7 +411,7 @@ def _body_send_recv_req(pool, method, url, headers, data, timeout, want_full_res
                 elif _DEBUG > 0:
                     print(method, req_id, url, "<=", response.status, "(%dms)" % t, Repr().repr(content),
                           file=sys.stderr)
-        return content
+        return (response, content)
     raise AssertionError('Should never reach this line: expected a result to have been returned by now')
 
 
@@ -524,8 +524,9 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
         response = None
         try:
             pool = _get_pool_manager(**pool_args)
-            return _body_send_recv_req(pool, method, url, headers, data, timeout, want_full_response,
-                                       decode_response_body, kwargs)
+            response, content = _body_send_recv_req(pool, method, url, headers, data, timeout,
+                                                    want_full_response, decode_response_body, kwargs)
+            return content
         except Exception as e:
             # Avoid reusing connections in the pool, since they may be
             # in an inconsistent state (observed as "ResponseNotReady"
