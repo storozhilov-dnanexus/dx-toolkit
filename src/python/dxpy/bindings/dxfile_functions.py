@@ -111,12 +111,19 @@ def download_dxfile(dxid, filename, chunksize=dxfile.DEFAULT_BUFFER_SIZE, append
 
     '''
     # retry the inner loop while there are retriable errors
-    part_retry_counter = defaultdict(lambda: 3)
-    success = False
-    while not success:
-        success = _download_dxfile(dxid, filename, part_retry_counter,
-                                   chunksize=chunksize, append=append,
-                                   show_progress=show_progress, project=project, **kwargs)
+    def download_with_chunksize(csize):
+        part_retry_counter = defaultdict(lambda: 3)
+        success = False
+        while not success:
+            success = _download_dxfile(dxid, filename, part_retry_counter,
+                                       chunksize=csize, append=append,
+                                       show_progress=show_progress, project=project, **kwargs)
+    try:
+        download_with_chunksize(chunksize)
+    except DXIncompleteReadsError:
+        # We were unable to read with large buffers, try again with a small buffer.
+        # This can happen if the data source is slow in sending data.
+        download_with_chunksize(dxfile.MIN_BUFFER_SIZE)
 
 
 def _download_dxfile(dxid, filename, part_retry_counter,
