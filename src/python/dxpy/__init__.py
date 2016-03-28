@@ -332,6 +332,89 @@ def _extract_retry_after_timeout(response):
     return max(1, seconds_to_wait)
 
 
+def _body_send_recv_req(pool, method, url, headers, data, timeout, want_full_response,
+                        decode_response_body, kwargs):
+    global _UPGRADE_NOTIFY
+    time_started = None
+    if _DEBUG > 0:
+        time_started = time.time()
+    _method, _url, _headers = _process_method_url_headers(method, url, headers)
+
+    # throws BadStatusLine if the server returns nothing
+    response = pool.request(method, url, headers=headers, body=data,
+                            timeout=timeout, retries=False, **kwargs)
+    req_id = response.headers.get("x-request-id", "unavailable")
+
+    if _UPGRADE_NOTIFY and response.headers.get('x-upgrade-info', '').startswith('A recommended update is available') and '_ARGCOMPLETE' not in os.environ:
+        logger.info(response.headers['x-upgrade-info'])
+        try:
+            with file(_UPGRADE_NOTIFY, 'a'):
+                os.utime(_UPGRADE_NOTIFY, None)
+        except:
+            pass
+        _UPGRADE_NOTIFY = False
+
+    # If an HTTP code that is not in the 200 series is received and the content is JSON, parse it and throw the
+    # appropriate error.  Otherwise, raise the usual exception.
+    if response.status // 100 != 2:
+        # response.headers key lookup is case-insensitive
+        if response.headers.get('content-type', '').startswith('application/json'):
+            content = response.data.decode('utf-8')
+            try:
+                content = json.loads(content)
+            except ValueError:
+                # The JSON is not parsable, but we should be able to retry.
+                raise exceptions.BadJSONInReply("Invalid JSON received from server", response.status)
+            try:
+                error_class = getattr(exceptions, content["error"]["type"], exceptions.DXAPIError)
+            except (KeyError, AttributeError, TypeError):
+                error_class = exceptions.HTTPError
+            raise error_class(content, response.status)
+        else:
+            content = response.data.decode('utf-8')
+            raise exceptions.HTTPError("{} {} [RequestID={}]\n{}".format(response.status,
+                                                                         response.reason,
+                                                                         req_id,
+                                                                         content))
+
+    if want_full_response:
+        return response
+    else:
+        if 'content-length' in response.headers:
+            if int(response.headers['content-length']) != len(response.data):
+                range_str = (' (%s)' % (headers['Range'],)) if 'Range' in headers else ''
+                raise exceptions.ContentLengthError(
+                    "Received response with content-length header set to %s but content length is %d%s. " +
+                    "[RequestID=%s]" %
+                    (response.headers['content-length'], len(response.data), range_str, req_id)
+                )
+
+        content = response.data
+
+        if decode_response_body:
+            content = content.decode('utf-8')
+            if response.headers.get('content-type', '').startswith('application/json'):
+                try:
+                    content = json.loads(content)
+                except ValueError:
+                    # The JSON is not parsable, but we should be able to retry.
+                    raise exceptions.BadJSONInReply("Invalid JSON received from server", response.status)
+                if _DEBUG > 0:
+                    t = int((time.time() - time_started) * 1000)
+                    req_id = response.headers.get('x-request-id')
+                if _DEBUG >= 3:
+                    print(method, req_id, url, "<=", response.status, "(%dms)" % t,
+                          "\n" + json.dumps(content, indent=2), file=sys.stderr)
+                elif _DEBUG == 2:
+                    print(method, req_id, url, "<=", response.status, "(%dms)" % t, json.dumps(content),
+                          file=sys.stderr)
+                elif _DEBUG > 0:
+                    print(method, req_id, url, "<=", response.status, "(%dms)" % t, Repr().repr(content),
+                          file=sys.stderr)
+        return content
+    raise AssertionError('Should never reach this line: expected a result to have been returned by now')
+
+
 def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
                   timeout=DEFAULT_TIMEOUT,
                   use_compression=None, jsonify_data=True, want_full_response=False,
@@ -437,86 +520,12 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
 
     try_index = 0
     while True:
-        success, time_started = True, None
+        success = True
         response = None
         try:
-            if _DEBUG > 0:
-                time_started = time.time()
-            _method, _url, _headers = _process_method_url_headers(method, url, headers)
-
-            # throws BadStatusLine if the server returns nothing
-            response = _get_pool_manager(**pool_args).request(_method, _url, headers=_headers, body=data,
-                                                              timeout=timeout, retries=False, **kwargs)
-            req_id = response.headers.get("x-request-id", "unavailable")
-
-            if _UPGRADE_NOTIFY and response.headers.get('x-upgrade-info', '').startswith('A recommended update is available') and '_ARGCOMPLETE' not in os.environ:
-                logger.info(response.headers['x-upgrade-info'])
-                try:
-                    with file(_UPGRADE_NOTIFY, 'a'):
-                        os.utime(_UPGRADE_NOTIFY, None)
-                except:
-                    pass
-                _UPGRADE_NOTIFY = False
-
-            # If an HTTP code that is not in the 200 series is received and the content is JSON, parse it and throw the
-            # appropriate error.  Otherwise, raise the usual exception.
-            if response.status // 100 != 2:
-                # response.headers key lookup is case-insensitive
-                if response.headers.get('content-type', '').startswith('application/json'):
-                    content = response.data.decode('utf-8')
-                    try:
-                        content = json.loads(content)
-                    except ValueError:
-                        # The JSON is not parsable, but we should be able to retry.
-                        raise exceptions.BadJSONInReply("Invalid JSON received from server", response.status)
-                    try:
-                        error_class = getattr(exceptions, content["error"]["type"], exceptions.DXAPIError)
-                    except (KeyError, AttributeError, TypeError):
-                        error_class = exceptions.HTTPError
-                    raise error_class(content, response.status)
-                else:
-                    content = response.data.decode('utf-8')
-                    raise exceptions.HTTPError("{} {} [RequestID={}]\n{}".format(response.status,
-                                                                                 response.reason,
-                                                                                 req_id,
-                                                                                 content))
-
-            if want_full_response:
-                return response
-            else:
-                if 'content-length' in response.headers:
-                    if int(response.headers['content-length']) != len(response.data):
-                        range_str = (' (%s)' % (headers['Range'],)) if 'Range' in headers else ''
-                        raise exceptions.ContentLengthError(
-                            "Received response with content-length header set to %s but content length is %d%s. " +
-                            "[RequestID=%s]" %
-                            (response.headers['content-length'], len(response.data), range_str, req_id)
-                        )
-
-                content = response.data
-
-                if decode_response_body:
-                    content = content.decode('utf-8')
-                    if response.headers.get('content-type', '').startswith('application/json'):
-                        try:
-                            content = json.loads(content)
-                        except ValueError:
-                            # The JSON is not parsable, but we should be able to retry.
-                            raise exceptions.BadJSONInReply("Invalid JSON received from server", response.status)
-                        if _DEBUG > 0:
-                            t = int((time.time() - time_started) * 1000)
-                            req_id = response.headers.get('x-request-id')
-                        if _DEBUG >= 3:
-                            print(method, req_id, url, "<=", response.status, "(%dms)" % t,
-                                  "\n" + json.dumps(content, indent=2), file=sys.stderr)
-                        elif _DEBUG == 2:
-                            print(method, req_id, url, "<=", response.status, "(%dms)" % t, json.dumps(content),
-                                  file=sys.stderr)
-                        elif _DEBUG > 0:
-                            print(method, req_id, url, "<=", response.status, "(%dms)" % t, Repr().repr(content),
-                                  file=sys.stderr)
-                return content
-            raise AssertionError('Should never reach this line: expected a result to have been returned by now')
+            pool = _get_pool_manager(**pool_args)
+            return _body_send_recv_req(pool, method, url, headers, data, timeout, want_full_response,
+                                       decode_response_body, kwargs)
         except Exception as e:
             # Avoid reusing connections in the pool, since they may be
             # in an inconsistent state (observed as "ResponseNotReady"
