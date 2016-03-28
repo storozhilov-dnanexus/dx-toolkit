@@ -573,9 +573,9 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
 
             # Retries have been exhausted, and we are unable to get a full
             # buffer from the data source. Raise a special exception.
-            if isinstance(e, exceptions.urllib3.ConnectionBroken) and \
-               'IncompleteRead' in e.msg:
-                raise DXIncompleteReadsError
+            if isinstance(e, urllib3.exceptions.ProtocolError) and \
+               'Connection broken: IncompleteRead' in str(e):
+                raise DXIncompleteReadsError(exception_msg)
             raise
         finally:
             if success and try_index > 0:
