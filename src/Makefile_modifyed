@@ -122,16 +122,22 @@ PYTHON_LIBDIR := $(DNANEXUS_LIBDIR)/python2.7/site-packages
 
 python: api_wrappers toolkit_version $(DNANEXUS_HOME)/bin/dx
 
+ifeq ($(OS), Windows_NT)
+        ACTIVATE='Scripts/activate'
+else 
+        ACTIVATE='activate'
+endif
+
 $(DNANEXUS_HOME)/bin/dx: $(shell find python/{dxpy,scripts,requirements*,setup*} -not -name toolkit_version*)
 	python -c 'import sys; exit("dx-toolkit is not compatible with Python < 2.7" if sys.version_info < (2, 7) else 0)'
 	rm -rf "$(PYTHON_LIBDIR)" "$(DX_PY_ENV)" python/dist
 	virtualenv --python=python "$(DX_PY_ENV)"
-	unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --upgrade -r python/requirements_setuptools.txt
+	unset PYTHONPATH; source "$(DX_PY_ENV)/bin/$(ACTIVATE)"; pip install --upgrade -r python/requirements_setuptools.txt
 ifeq ($(UNAME), Darwin)
-	unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --no-cache-dir --prefix="$(DNANEXUS_HOME)" -r python/requirements_readline.txt
+	unset PYTHONPATH; source "$(DX_PY_ENV)/bin/$(ACTIVATE)"; pip install --no-cache-dir --prefix="$(DNANEXUS_HOME)" -r python/requirements_readline.txt
 endif
-	unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; cd python; python setup.py bdist_wheel
-	unset PYTHONPATH; source "$(DX_PY_ENV)/bin/activate"; pip install --ignore-installed --prefix="$(DNANEXUS_HOME)" python/dist/*.whl
+	unset PYTHONPATH; source "$(DX_PY_ENV)/bin/$(ACTIVATE)"; cd python; python setup.py bdist_wheel
+	unset PYTHONPATH; source "$(DX_PY_ENV)/bin/$(ACTIVATE)"; pip install --ignore-installed --prefix="$(DNANEXUS_HOME)" python/dist/*.whl
 	mkdir -p "$$(dirname '$(PYTHON_LIBDIR)')"
 	mv "$(DNANEXUS_HOME)"/lib/python?.?/site-packages "$(PYTHON_LIBDIR)" || mv "$(DNANEXUS_HOME)"/site-packages "$(PYTHON_LIBDIR)"
 	rm -f "$(DNANEXUS_HOME)/bin/xattr"
@@ -254,13 +260,13 @@ setup_doc_virtualenv: .setup_doc_virtualenv
 .setup_doc_virtualenv: ../build/doc_build_requirements.txt
 	@if ! which pip > /dev/null; then echo "pip not found, please run apt-get install python-pip"; exit 1; fi
 	@if ! which virtualenv > /dev/null; then echo "virtualenv not found, please run apt-get install python-virtualenv"; exit 1; fi
-	(unset PYTHONPATH; virtualenv ../build/doc_env; source ../build/doc_env/bin/activate; pip install --find-links=http://dnanexus-pypi2.s3.amazonaws.com/index.html --requirement=../build/doc_build_requirements.txt)
+	(unset PYTHONPATH; virtualenv ../build/doc_env; source ../build/doc_env/bin/$(ACTIVATE); pip install --find-links=http://dnanexus-pypi2.s3.amazonaws.com/index.html --requirement=../build/doc_build_requirements.txt)
 	virtualenv --relocatable ../build/doc_env
 	touch .setup_doc_virtualenv
 
 doc_python: python setup_doc_virtualenv
 	rm -rf ../doc/python/*
-	source ../build/doc_env/bin/activate; source "../environment"; export PYTHONPATH="$${PYTHONPATH}:../lib"; $(MAKE) -C python/doc html
+	source ../build/doc_env/bin/$(ACTIVATE); source "../environment"; export PYTHONPATH="$${PYTHONPATH}:../lib"; $(MAKE) -C python/doc html
 
 doc_dxcpp:
 	mkdir -p ../doc/cpp/dxcpp
