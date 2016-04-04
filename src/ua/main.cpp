@@ -30,7 +30,6 @@
 #include <psapi.h>
 #else
 #include <unistd.h>
-#include <sys/resource.h>
 #endif
 #ifdef MAC_BUILD
 #include <mach/mach.h>
@@ -204,9 +203,12 @@ long getRSS() {
   }    
   return (long)info.WorkingSetSize;
 #elif defined(__APPLE__) && defined(__MACH__)
-  mach_task_basic_info_data_t info;
-  mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
-  if ( task_info( mach_task_self( ), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount ) != KERN_SUCCESS ) {
+  task_basic_info_data_t info;
+  mach_msg_type_number_t infoCount = TASK_BASIC_INFO_COUNT;
+  if ( task_info( mach_task_self( ), TASK_BASIC_INFO, (task_info_t)&info, &infoCount ) != KERN_SUCCESS ) {
+  //mach_task_basic_info_data_t info;
+  //mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
+  //if ( task_info( mach_task_self( ), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount ) != KERN_SUCCESS ) {
     DXLOG(logWARNING) << "Unable to get process' memory usage";
     return (long)0L;
   }
