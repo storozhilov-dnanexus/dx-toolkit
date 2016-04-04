@@ -30,10 +30,10 @@
 #include <psapi.h>
 #else
 #include <unistd.h>
+#include <sys/resource.h>
 #endif
 #ifdef MAC_BUILD
 #include <mach/mach.h>
-#include <mach/task_info.h>
 #endif
 
 #include "dxcpp/dxcpp.h"
