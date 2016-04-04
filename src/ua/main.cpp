@@ -33,6 +33,7 @@
 #endif
 #ifdef MAC_BUILD
 #include <mach/mach.h>
+#include <mach/task_info.h>
 #endif
 
 #include "dxcpp/dxcpp.h"
