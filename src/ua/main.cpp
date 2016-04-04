@@ -162,9 +162,12 @@ long getAvailableSystemMemory()
   GlobalMemoryStatusEx(&status);
   return status.ullTotalPhys;
 #elif defined(__APPLE__) && defined(__MACH__)
-  mach_task_basic_info_data_t info;
-  mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
-  if ( task_info( mach_task_self( ), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount ) != KERN_SUCCESS ) {
+  task_basic_info_data_t info;
+  mach_msg_type_number_t infoCount = TASK_BASIC_INFO_COUNT;
+  if ( task_info( mach_task_self( ), TASK_BASIC_INFO, (task_info_t)&info, &infoCount ) != KERN_SUCCESS ) {
+  //mach_task_basic_info_data_t info;
+  //mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
+  //if ( task_info( mach_task_self( ), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount ) != KERN_SUCCESS ) {
     return (long)0L;
   }
   return (long)info.virtual_size;
