@@ -162,7 +162,7 @@ long getAvailableSystemMemory()
   GlobalMemoryStatusEx(&status);
   return status.ullTotalPhys;
 #elif defined(__APPLE__) && defined(__MACH__)
-  struct mach_task_basic_info info;
+  mach_task_basic_info_data_t info;
   mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
   if ( task_info( mach_task_self( ), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount ) != KERN_SUCCESS ) {
     return (long)0L;
@@ -199,11 +199,11 @@ long getRSS() {
   DWORD err = GetLastError();
   if (err != 0 ) {
     DXLOG(logWARNING) << "Unable to get process' memory usage, error code " << err;
-      return 0;
+    return 0;
   }    
   return (long)info.WorkingSetSize;
 #elif defined(__APPLE__) && defined(__MACH__)
-  struct mach_task_basic_info info;
+  mach_task_basic_info_data_t info;
   mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
   if ( task_info( mach_task_self( ), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount ) != KERN_SUCCESS ) {
     DXLOG(logWARNING) << "Unable to get process' memory usage";
