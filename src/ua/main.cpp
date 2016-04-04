@@ -33,7 +33,6 @@
 #endif
 #ifdef MAC_BUILD
 #include <mach/mach.h>
-#include <task_info.h>
 #endif
 
 #include "dxcpp/dxcpp.h"
@@ -162,17 +161,19 @@ long getAvailableSystemMemory()
   status.dwLength = sizeof(status);
   GlobalMemoryStatusEx(&status);
   return status.ullTotalPhys;
-#elif MAC_BUILD
+#elif defined(__APPLE__) && defined(__MACH__)
   struct mach_task_basic_info info;
   mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
   if ( task_info( mach_task_self( ), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount ) != KERN_SUCCESS ) {
     return (long)0L;
   }
   return (long)info.virtual_size;
-#else
+#elif defined(__linux__) || defined(__linux) || defined(linux)
   long pages = sysconf(_SC_AVPHYS_PAGES);
   long page_size = sysconf(_SC_PAGE_SIZE);
   return pages * page_size;
+#else
+  return 0;
 #endif
 }
 
@@ -201,7 +202,7 @@ long getRSS() {
       return 0;
   }    
   return (long)info.WorkingSetSize;
-#elif MAC_BUILD
+#elif defined(__APPLE__) && defined(__MACH__)
   struct mach_task_basic_info info;
   mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
   if ( task_info( mach_task_self( ), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount ) != KERN_SUCCESS ) {
@@ -209,7 +210,7 @@ long getRSS() {
     return (long)0L;
   }
   return (long)info.resident_size;
-#else
+#elif defined(__linux__) || defined(__linux) || defined(linux)
   ifstream statStream("/proc/self/statm",ios_base::in);
   if (!statStream.good()) {
     DXLOG(logWARNING) << "Unable to get process' memory usage";
@@ -221,6 +222,8 @@ long getRSS() {
   statStream >> s >> rss;
   statStream.close();
   return rss * sysconf(_SC_PAGE_SIZE);
+#else
+  return 0;
 #endif
 }
 
