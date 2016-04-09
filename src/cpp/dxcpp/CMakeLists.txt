@@ -17,16 +17,29 @@ include("$ENV{DNANEXUS_HOME}/src/cpp/cmake_include/set_build_version.txt" NO_POL
 ####################################
 # Find libcrypto (and openssl/md5.h)
 ####################################
-find_path(OPENSSL_INCLUDE_DIR openssl/md5.h)
-find_library(CRYPTO_LIBRARY_PATH NAMES crypto)
-
-if (OPENSSL_INCLUDE_DIR AND CRYPTO_LIBRARY_PATH)
-  message(STATUS "dxcpp CMakeLists.txt says: libcrypto, and openssl/md5.h found!")
-  message(STATUS "\t** OPENSSL_INCLUDE_PATH = \"${OPENSSL_INCLUDE_DIR}\"")
-  message(STATUS "\t** CRYPTO_LIBRARY_PATH = \"${CRYPTO_LIBRARY_PATH}\"")
+if (WIN32)
+  find_package(OpenSSL REQUIRED)
+  #if (OPENSSL_ROOT_DIR OPENSSL_INCLUDE_DIR OPENSSL_LIBRARIES)
+  if (OpenSSL_FOUND)
+    message(STATUS "dxcpp CMakeLists.txt says: OpenSSL found!")
+    message(STATUS "\t** OPENSSL_INCLUDE_DIR = \"${OPENSSL_INCLUDE_DIR}\"")
+    message(STATUS "\t** OPENSSL_LIBRARIES = \"${OPENSSL_LIBRARIES}\"")
+  else()
+    message(FATAL_ERROR "\ndxcpp says: Unable to find OpenSSL. OPENSSL_INCLUDE_DIR = \"${OPENSSL_INCLUDE_DIR}\", OPENSSL_LIBRARIES = \"${OPENSSL_LIBRARIES}\",")
+  endif()
 else()
-  message(FATAL_ERROR "\ndxcpp says: Unable to find 'libcrypto' and/or 'openssl/md5.h'. OPENSSL_INCLUDE_PATH = \"${OPENSSL_INCLUDE_DIR}\", CRYPTO_LIBRARY_PATH = \"${CRYPTO_LIBRARY_PATH}\"")
+  find_path(OPENSSL_INCLUDE_DIR openssl/md5.h)
+  find_library(CRYPTO_LIBRARY_PATH NAMES crypto)
+
+  if (OPENSSL_INCLUDE_DIR AND CRYPTO_LIBRARY_PATH)
+    message(STATUS "dxcpp CMakeLists.txt says: libcrypto, and openssl/md5.h found!")
+    message(STATUS "\t** OPENSSL_INCLUDE_DIR = \"${OPENSSL_INCLUDE_DIR}\"")
+    message(STATUS "\t** CRYPTO_LIBRARY_PATH = \"${CRYPTO_LIBRARY_PATH}\"")
+  else()
+    message(FATAL_ERROR "\ndxcpp says: Unable to find 'libcrypto' and/or 'openssl/md5.h'. OPENSSL_INCLUDE_DIR = \"${OPENSSL_INCLUDE_DIR}\", CRYPTO_LIBRARY_PATH = \"${CRYPTO_LIBRARY_PATH}\"")
+  endif()
 endif()
+
 include_directories(BEFORE ${OPENSSL_INCLUDE_DIR})
 ###################################
 
