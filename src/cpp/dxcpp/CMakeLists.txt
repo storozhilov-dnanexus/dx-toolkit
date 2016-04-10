@@ -19,7 +19,8 @@ include("$ENV{DNANEXUS_HOME}/src/cpp/cmake_include/set_build_version.txt" NO_POL
 ####################################
 if (WIN32)
   find_package(OpenSSL REQUIRED)
-  #if (OPENSSL_ROOT_DIR OPENSSL_INCLUDE_DIR OPENSSL_LIBRARIES)
+  find_path(OPENSSL_INCLUDE_DIR openssl/md5.h)
+  find_library(CRYPTO_LIBRARY_PATH NAMES crypto)
   if (OpenSSL_FOUND)
     message(STATUS "dxcpp CMakeLists.txt says: OpenSSL found!")
     message(STATUS "\t** OPENSSL_INCLUDE_DIR = \"${OPENSSL_INCLUDE_DIR}\"")
@@ -67,4 +68,9 @@ add_subdirectory(../SimpleHttpLib SimpleHttpLib)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_SOURCE_DIR}/../SimpleHttpLib ${CMAKE_CURRENT_SOURCE_DIR}/../dxjson)
 
 add_library(dxcpp dxcpp.cc api.cc bindings.cc bindings/dxapplet.cc bindings/dxrecord.cc bindings/dxfile.cc bindings/dxjob.cc bindings/dxgtable.cc bindings/dxapp.cc bindings/dxproject.cc bindings/search.cc bindings/execution_common_helper.cc exec_utils.cc utils.cc dxlog.cc)
-target_link_libraries(dxcpp dxhttp dxjson ${CRYPTO_LIBRARY_PATH} ${Boost_LIBRARIES})
+if (MINGW)
+  target_link_libraries(dxcpp dxhttp dxjson ${OPENSSL_LIBRARIES} ${Boost_LIBRARIES})
+else()
+  target_link_libraries(dxcpp dxhttp dxjson ${CRYPTO_LIBRARY_PATH} ${Boost_LIBRARIES})
+endif()
+
