@@ -28,6 +28,7 @@ logging.basicConfig(level=logging.INFO)
 
 from ..compat import (USING_PYTHON2, basestring, str, input, wrap_stdio_in_codecs, decode_command_line_args,
                       unwrap_stream, sys_encoding)
+from ..packages import argcomplete
 
 wrap_stdio_in_codecs()
 decode_command_line_args()
@@ -4667,7 +4668,6 @@ parser_categories['all']['cmds'].sort()
 def main():
     # Bash argument completer hook
     if '_ARGCOMPLETE' in os.environ:
-        import argcomplete
         argcomplete.autocomplete(parser,
                                  always_complete_options=False,
                                  exclude=['import', 'gtable', 'export'],
