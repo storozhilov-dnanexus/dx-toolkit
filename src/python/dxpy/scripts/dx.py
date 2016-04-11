@@ -3324,6 +3324,12 @@ def exit_shell(args):
     if state['interactive']:
         raise StopIteration()
 
+
+def build_asset(args):
+    from dxpy.scripts import dx_build_asset
+    sys.argv = ['dx build_asset'] + sys.argv[2:]
+    dx_build_asset.main()
+
 class runHelp(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         if namespace.executable is None:
@@ -4638,6 +4644,39 @@ parser_upgrade = subparsers.add_parser('upgrade', help='Upgrade dx-toolkit (the 
 parser_upgrade.add_argument('args', nargs='*')
 parser_upgrade.set_defaults(func=upgrade)
 register_parser(parser_upgrade)
+
+from dxpy.scripts.dx_build_asset import parser as build_asset_parser
+build_asset_parser.prog = 'dx build_asset'
+
+asset_build = subparsers.add_parser('build_asset', help='Build a new Asset',
+                                    formatter_class=argparse.RawTextHelpFormatter,
+                                    description=fill('Build an asset from a local source directory. The directory must have a file called "dxasset.json" containing a JSON string in following format:') + '''
+
+
+EXAMPLE
+
+{
+    "name": "asset_library_name",
+    "title": "A human readable name",
+    "description": " A detailed description abput the asset",
+    "version": "0.0.1",
+    "ubuntuRelease": "12.04",
+    "project": "dx-public-assets",
+    "execDepends":
+                [
+                    {"name": "samtools", "package_manager": "apt"},
+                    {"name": "bamtools"},
+                    {"name": "bio", "package_manager": "gem", "version": "1.4.3"},
+                    {"name": "pysam","package_manager": "pip", "version": "0.7.4"},
+                    {"name": "Bio::SeqIO", "package_manager": "cpan", "version": "1.006924"}
+                ]
+}
+''',
+                                     prog='dx build_asset',
+                                     add_help=False,
+                                     parents=[build_asset_parser, env_args])
+asset_build.set_defaults(func=build_asset)
+register_parser(asset_build, categories='exec')
 
 category_list = '\n  '.join([category + parser_categories[category]['desc'] for category in parser_categories_sorted])
 parser_help = subparsers.add_parser('help', help='Display help messages and dx commands by category',

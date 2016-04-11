@@ -7494,6 +7494,52 @@ class TestDXCp(DXTestCase):
         rm_project(proj_id)
 
 
+class TestDXBuildAsset(DXTestCase):
+    def setUp(self):
+        self.other_proj_id = run("dx new project dx-assets --brief").strip()
+        self.temp_file_path = tempfile.mkdtemp()
+        super(TestDXBuildAsset, self).setUp()
+
+    def tearDown(self):
+        dxpy.api.project_destroy(self.other_proj_id, {'terminateJobs': True})
+        shutil.rmtree(self.temp_file_path)
+        super(TestDXBuildAsset, self).tearDown()
+
+    def write_asset_directory(self, asset_name, dxasset_str, asset_rsc_dir=None):
+        # Note: if called twice with the same asset_name, will overwrite
+        # the dxasset.json
+        try:
+            os.mkdir(os.path.join(self.temp_file_path, asset_name))
+        except OSError as e:
+            if e.errno != 17:
+                raise e
+        if dxasset_str is not None:
+            with open(os.path.join(self.temp_file_path, asset_name, 'dxasset.json'), 'wb') as manifest:
+                manifest.write(dxasset_str.encode())
+        if asset_rsc_dir:
+            try:
+                os.mkdir(os.path.join(self.temp_file_path, asset_name, asset_rsc_dir))
+            except OSError as e:
+                if e.errno != 17: # directory already exists
+                    raise e
+        return os.path.join(self.temp_file_path, asset_name)
+
+    def test_build_asset_help(self):
+        env = override_environment(DX_SECURITY_CONTEXT=None, DX_APISERVER_HOST=None, DX_APISERVER_PORT=None, DX_APISERVER_PROTOCOL=None)
+        run("dx build_asset -h", env=env)
+
+    def test_build_asset_with_no_dxasset_json(self):
+        asset_dir = self.write_asset_directory("asset_with_no_json", None)
+        print(asset_dir)
+        with self.assertSubprocessFailure(stderr_regexp='does not contain dxasset\.json', exit_code=1):
+            run("dx build_asset " + asset_dir)
+
+    def test_build_asset_with_malformed_dxasset_json(self):
+        asset_dir = self.write_asset_directory("asset_with_no_json", "{", None)
+        print(asset_dir)
+        with self.assertSubprocessFailure(stderr_regexp='Could not parse dxasset\.json', exit_code=1):
+            run("dx build_asset " + asset_dir)
+
 if __name__ == '__main__':
     if 'DXTEST_FULL' not in os.environ:
         sys.stderr.write('WARNING: env var DXTEST_FULL is not set; tests that create apps or run jobs will not be run\n')
