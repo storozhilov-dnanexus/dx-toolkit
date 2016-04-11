@@ -14,6 +14,20 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-overloaded-virtual -Wno-switch")
 
 include("$ENV{DNANEXUS_HOME}/src/cpp/cmake_include/set_build_version.txt" NO_POLICY_SCOPE)
 
+########################################
+# Find libcurl include path on Windows
+########################################
+if (MINGW)
+  find_path(CURL_INCLUDE_DIRS curl/curl.h HINTS /c/curl)
+  if (CURL_INCLUDE_DIRS)
+    message(STATUS "dxcpp CMakeLists.txt says: curl/curl.h found!")
+    message(STATUS "\t** CURL_INCLUDE_DIRS = \"${CURL_INCLUDE_DIRS}\"")
+  else()
+    message(FATAL_ERROR "\ndxcpp CMakeLists.txt says: Unable to find curl/curl.h. CURL_INCLUDE_DIRS = \"${CURL_INCLUDE_DIRS}\"")
+  endif()
+  include_directories(BEFORE ${CURL_INCLUDE_DIRS})
+endif()
+
 ####################################
 # Find libcrypto (and openssl/md5.h)
 ####################################

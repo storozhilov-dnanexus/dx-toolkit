@@ -51,6 +51,20 @@ else()
   message(FATAL_ERROR "Unknown platform. None of these CMAKE variables found: APPLE, MINGW, or UNIX")
 endif()
 
+########################################
+# Find libcurl include path on Windows
+########################################
+if (MINGW)
+  find_path(CURL_INCLUDE_DIRS curl/curl.h HINTS /c/curl)
+  if (CURL_INCLUDE_DIRS)
+    message(STATUS "dxcpp CMakeLists.txt says: curl/curl.h found!")
+    message(STATUS "\t** CURL_INCLUDE_DIRS = \"${CURL_INCLUDE_DIRS}\"")
+  else()
+    message(FATAL_ERROR "\ndxcpp CMakeLists.txt says: Unable to find curl/curl.h. CURL_INCLUDE_DIRS = \"${CURL_INCLUDE_DIRS}\"")
+  endif()
+  include_directories(BEFORE ${CURL_INCLUDE_DIRS})
+endif()
+
 add_definitions(-D_FILE_OFFSET_BITS=64)
 add_definitions(-DDX_VERIFY_FILE_VERSION=\"${DX_VERIFY_FILE_VERSION}\")
 
