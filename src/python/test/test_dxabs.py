@@ -19,31 +19,31 @@
 
 from __future__ import print_function, unicode_literals, division, absolute_import
 
-import os, unittest, tempfile, filecmp, time, json, sys, shutil
-import string
-import subprocess
-
-import requests
-from requests.packages.urllib3.exceptions import SSLError
+import filecmp
+import os
+import sys
+import tempfile
+import unittest
 
 import dxpy
 import dxpy_testutil as testutil
-from dxpy.exceptions import (DXAPIError, DXFileError, DXError, DXJobFailureError, ResourceNotFound)
-from dxpy.utils import pretty_print, warn
-from dxpy.utils.resolver import resolve_path, resolve_existing_path, ResolutionError, is_project_explicit
+
 
 def remove_all(proj_id, folder="/"):
     dxproject = dxpy.DXProject(proj_id)
     dxproject.remove_folder(folder, recurse=True)
+
 
 def setUpTempProjects(thing):
     thing.old_workspace_id = dxpy.WORKSPACE_ID
     thing.proj_id = dxpy.api.project_new({'name': 'azure-test-project', 'region': 'azure:westus'})['id']
     dxpy.set_workspace_id(thing.proj_id)
 
+
 def tearDownTempProjects(thing):
     dxpy.api.project_destroy(thing.proj_id, {'terminateJobs': True})
     dxpy.set_workspace_id(thing.old_workspace_id)
+
 
 class TestDXFile(unittest.TestCase):
 
@@ -89,12 +89,8 @@ class TestDXFile(unittest.TestCase):
         dxpy.download_dxfile(self.dxfile.get_id(), self.new_file.name)
         self.assertTrue(filecmp.cmp(self.foo_file.name, self.new_file.name))
 
+
 if __name__ == '__main__':
-  if dxpy.AUTH_HELPER is None:
-    sys.exit(1, 'Error: Need to be logged in to run these tests')
-  if 'DXTEST_FULL' not in os.environ:
-    if 'DXTEST_ISOLATED_ENV' not in os.environ:
-      sys.stderr.write('WARNING: neither env var DXTEST_FULL nor DXTEST_ISOLATED_ENV are set; tests that create apps will not be run\n')
-    if 'DXTEST_RUN_JOBS' not in os.environ:
-      sys.stderr.write('WARNING: neither env var DXTEST_FULL nor DXTEST_RUN_JOBS are set; tests that run jobs will not be run\n')
-  unittest.main()
+    if dxpy.AUTH_HELPER is None:
+        sys.exit(1, 'Error: Need to be logged in to run these tests')
+    unittest.main()
