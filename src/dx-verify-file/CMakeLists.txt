@@ -23,6 +23,95 @@ if (STATIC_BOOST) # can be set by using -DSTATIC_BOOST=1 while running cmake
 endif ()
 set(Boost_USE_MULTITHREADED ON)
 
+# Build boost from source on Windows unless C:\boost already exists
+if (MINGW AND NOT IS_DIRECTORY "c:/boost")
+  message("Downloading and building Boost")
+
+  set(BoostVersion 1.60.0)
+  set(BoostSHA1 ac74db1324e6507a309c5b139aea41af624c8110)
+
+  # Create build folder name derived from version
+  string(REGEX REPLACE "beta\\.([0-9])$" "beta\\1" BoostFolderName ${BoostVersion})
+  string(REPLACE "." "_" BoostFolderName ${BoostFolderName})
+  set(BoostFolderName boost_${BoostFolderName})
+
+  set(BoostCacheDir ${CMAKE_BINARY_DIR})
+
+  # Set up the full path to the source directory
+  set(BoostSourceDir "${BoostFolderName}_${CMAKE_CXX_COMPILER_ID}_${CMAKE_CXX_COMPILER_VERSION}")
+  string(REPLACE "." "_" BoostSourceDir ${BoostSourceDir})
+  set(BoostSourceDir "${BoostCacheDir}/${BoostSourceDir}")
+
+  set(ZipFilePath "${BoostCacheDir}/${BoostFolderName}.tar.gz")
+  if(NOT EXISTS ${ZipFilePath})
+    message(STATUS "Downloading boost ${BoostVersion} to ${BoostCacheDir}")
+  endif()
+  file(DOWNLOAD http://sourceforge.net/projects/boost/files/boost/${BoostVersion}/${BoostFolderName}.tar.gz/download
+     ${ZipFilePath}
+     STATUS Status
+     SHOW_PROGRESS
+     EXPECTED_HASH SHA1=${BoostSHA1}
+     )
+
+  # Extract boost if required
+  string(FIND "${Status}" "returning early" Found)
+  if(Found LESS "0" OR NOT IS_DIRECTORY "${BoostSourceDir}")
+    set(BoostExtractFolder "${BoostCacheDir}/boost_unzip")
+    file(REMOVE_RECURSE ${BoostExtractFolder})
+    file(MAKE_DIRECTORY ${BoostExtractFolder})
+    file(COPY ${ZipFilePath} DESTINATION ${BoostExtractFolder})
+    message(STATUS "Extracting boost ${BoostVersion} to ${BoostExtractFolder}")
+    execute_process(COMMAND ${CMAKE_COMMAND} -E tar zxf ${BoostFolderName}.tar.gz
+                    WORKING_DIRECTORY ${BoostExtractFolder}
+                    RESULT_VARIABLE Result
+                    )
+    if(NOT Result EQUAL "0")
+      message(FATAL_ERROR "Failed extracting boost ${BoostVersion} to ${BoostExtractFolder}")
+    endif()
+    file(REMOVE ${BoostExtractFolder}/${BoostFolderName}.tar.gz)
+
+    # Get the path to the extracted folder
+    file(GLOB ExtractedDir "${BoostExtractFolder}/*")
+    list(LENGTH ExtractedDir n)
+    if(NOT n EQUAL "1" OR NOT IS_DIRECTORY ${ExtractedDir})
+      message(FATAL_ERROR "Failed extracting boost ${BoostVersion} to ${BoostExtractFolder}")
+    endif()
+    file(RENAME ${ExtractedDir} ${BoostSourceDir})
+    file(REMOVE_RECURSE ${BoostExtractFolder})
+  endif()
+
+  # Build b2 (bjam) if required
+  unset(b2Path CACHE)
+  message(STATUS "Building b2 (bjam)")
+  set(b2Bootstrap "bootstrap.bat")
+  list(APPEND b2Bootstrap mingw)
+  # TODO: Could also try set(b2Bootstrap bootstrap.bat mingw)
+  message("Executing command '${b2Bootstrap}' in working dir ${BoostSourceDir}...")
+  execute_process(COMMAND ${b2Bootstrap} WORKING_DIRECTORY ${BoostSourceDir}
+                  RESULT_VARIABLE Result OUTPUT_VARIABLE Output ERROR_VARIABLE Error)
+  if(NOT Result EQUAL "0")
+    message(FATAL_ERROR "Failed running '${b2Bootstrap}': '${Result}' '${Output}'\n'${Error}'\n")
+  endif()
+
+  # Build boost and install in C:\boost
+  set(b2Install b2 install
+             --prefix=c:/boost
+             toolset=gcc
+             --with-thread
+             --with-program_options
+             --with-filesystem
+             --with-system
+             --with-regex
+	     )
+  message("Executing command '${b2Install}' in working dir ${BoostSourceDir}...")
+  execute_process(COMMAND ${b2Install} WORKING_DIRECTORY ${BoostSourceDir}
+                  RESULT_VARIABLE Result OUTPUT_VARIABLE Output ERROR_VARIABLE Error)
+  if(NOT Result EQUAL "0")
+    message(FATAL_ERROR "Failed running '${b2Install}': '${Result}' '${Output}'\n'${Error}'\n")
+  endif()
+endif()
+
+# Locate boost
 find_package(Boost 1.48 COMPONENTS thread program_options filesystem system REQUIRED)
 if (Boost_FOUND)
   message(STATUS "dx-verify-file CMakeLists.txt says: Boost libraries found")
