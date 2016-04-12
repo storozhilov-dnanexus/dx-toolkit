@@ -33,6 +33,7 @@ export DX_WORKSPACE_ID=container-0123456789ABCDEF01234567
 export DX_CLI_WD=/
 #export _DX_DEBUG=1
 
+echo "running loop"
 for i in {1..8}; do
     dx api system setPayload >/dev/null
     dx download test --output ${SCRATCH_DIR}/$PORT -f 2>/dev/null
