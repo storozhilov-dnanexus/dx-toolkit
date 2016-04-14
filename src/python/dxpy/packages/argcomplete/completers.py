@@ -74,4 +74,3 @@ class FilesCompleter(object):
             if self.directories:
                 completion += [f + '/' for f in anticomp]
         return completion
-
