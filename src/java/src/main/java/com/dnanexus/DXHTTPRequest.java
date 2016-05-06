@@ -161,7 +161,13 @@ public class DXHTTPRequest {
      */
     public JsonNode request(String resource, JsonNode data, RetryStrategy retryStrategy) {
         String dataAsString = data.toString();
-        return requestImpl(resource, dataAsString, true, retryStrategy).responseJson;
+        System.err.println("DXHTTPRequest::request(): Making request to '" + resource + "' resource: " + dataAsString);
+//        return requestImpl(resource, dataAsString, true, retryStrategy).responseJson;
+        DXHTTPRequest.ParsedResponse response = requestImpl(resource, dataAsString, true, retryStrategy);
+        JsonNode responseJson = response.responseJson;
+        System.err.println("DXHTTPRequest::request(): Response is: " + responseJson.toString());
+        System.err.println("--------------------------------------------------------------");
+        return responseJson;
     }
 
     /**
@@ -196,6 +202,7 @@ public class DXHTTPRequest {
      *         response (includes HTTP protocol errors).
      */
     public String request(String resource, String data, RetryStrategy retryStrategy) {
+        System.err.println("Sending data to '" + resource + "' resource: " + data);
         return requestImpl(resource, data, false, retryStrategy).responseText;
     }
 

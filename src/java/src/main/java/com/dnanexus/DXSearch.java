@@ -158,7 +158,7 @@ public final class DXSearch {
             this.describe = previousQuery.describe;
 
             this.starting = next.isNull() ? null : next;
-            this.limit = limit;
+            this.limit = previousQuery.limit;
         }
 
         /**
@@ -167,7 +167,7 @@ public final class DXSearch {
          *
          * @param builder builder object to initialize this query with
          */
-        private FindDataObjectsRequest(FindDataObjectsRequestBuilder<?> builder) {
+        private FindDataObjectsRequest(FindDataObjectsRequestBuilder<?> builder, int limit) {
             this.classConstraint = builder.classConstraint;
             this.id = builder.id;
             this.state = builder.state;
@@ -202,7 +202,7 @@ public final class DXSearch {
             }
 
             this.starting = null;
-            this.limit = null;
+            this.limit = (limit > 0 ? limit : null);
         }
 
     }
@@ -248,7 +248,14 @@ public final class DXSearch {
         FindDataObjectsRequest buildRequestHash() {
             // Use this method to test the JSON hash created by a particular
             // builder call without actually executing the request.
-            return new FindDataObjectsRequest(this);
+            return new FindDataObjectsRequest(this, 0);
+        }
+
+        @VisibleForTesting
+        FindDataObjectsRequest buildRequestHash(int limit) {
+            // Use this method to test the JSON hash created by a particular
+            // builder call without actually executing the request.
+            return new FindDataObjectsRequest(this, limit);
         }
 
         /**
@@ -299,7 +306,20 @@ public final class DXSearch {
          * @return object encapsulating the result set
          */
         public FindDataObjectsResult<T> execute(int pageSize) {
-            return new FindDataObjectsResult<T>(this.buildRequestHash(), this.classConstraint,
+            return new FindDataObjectsResult<T>(this.buildRequestHash(pageSize), this.classConstraint,
+                    this.env, pageSize);
+        }
+
+        /**
+         * Executes the query with the specified page size using offset.
+         *
+         * @param pageSize number of items to obtain
+         * @param offset amount of items to skip
+         *
+         * @return object encapsulating the result set
+         */
+        public FindDataObjectsResult<T> execute(int pageSize, int offset) {
+            return new FindDataObjectsResult<T>(this.buildRequestHash(pageSize), this.classConstraint,
                     this.env, pageSize);
         }
 
@@ -916,6 +936,7 @@ public final class DXSearch {
 
             @Override
             public FindDataObjectsResultPage issueQuery(FindDataObjectsRequest query) {
+                System.out.println("ResultIterator.issueQuery(): Calling DXAPI.systemFindDataObjects() with query: " + query.toString());
                 return new FindDataObjectsResultPage(DXAPI.systemFindDataObjects(query,
                         FindDataObjectsResponse.class, env));
             }
@@ -926,7 +947,7 @@ public final class DXSearch {
         private final DXEnvironment env;
 
         // Number of results to fetch with each API call, or null to use the default
-        private final Integer pageSize;
+        private /*final*/ Integer pageSize;
 
         /**
          * Initializes this result set object with the default (API server-provided) page size.
@@ -983,6 +1004,10 @@ public final class DXSearch {
         @Override
         public Iterator<T> iterator() {
             return new ResultIterator();
+        }
+
+        public int total() {
+            return 0;
         }
     }
 
@@ -1072,7 +1097,7 @@ public final class DXSearch {
          *
          * @param builder builder object to initialize this query with
          */
-        private FindExecutionsRequest(FindExecutionsRequestBuilder<?> builder) {
+        private FindExecutionsRequest(FindExecutionsRequestBuilder<?> builder, int pageSize) {
             this.classConstraint = builder.classConstraint;
             this.id = builder.id;
             this.launchedBy = builder.launchedBy;
@@ -1125,7 +1150,8 @@ public final class DXSearch {
             this.describe = builder.describe;
 
             this.starting = null;
-            this.limit = null;
+            //this.limit = (pageSize > 0 ? pageSize : null);
+            this.limit = 3;
         }
     }
 
@@ -1173,7 +1199,14 @@ public final class DXSearch {
         FindExecutionsRequest buildRequestHash() {
             // Use this method to test the JSON hash created by a particular
             // builder call without actually executing the request.
-            return new FindExecutionsRequest(this);
+            return new FindExecutionsRequest(this, 0);
+        }
+
+        @VisibleForTesting
+        FindExecutionsRequest buildRequestHash(int pageSize) {
+            // Use this method to test the JSON hash created by a particular
+            // builder call without actually executing the request.
+            return new FindExecutionsRequest(this, pageSize);
         }
 
         /**
@@ -1210,7 +1243,7 @@ public final class DXSearch {
          * @return object encapsulating the result set
          */
         public FindExecutionsResult<T> execute() {
-            return new FindExecutionsResult<T>(this.buildRequestHash(), this.classConstraint,
+            return new FindExecutionsResult<T>(this.buildRequestHash(0), this.classConstraint,
                     this.env);
         }
 
@@ -1222,7 +1255,7 @@ public final class DXSearch {
          * @return object encapsulating the result set
          */
         public FindExecutionsResult<T> execute(int pageSize) {
-            return new FindExecutionsResult<T>(this.buildRequestHash(), this.classConstraint,
+            return new FindExecutionsResult<T>(this.buildRequestHash(pageSize), this.classConstraint,
                     this.env, pageSize);
         }
 
