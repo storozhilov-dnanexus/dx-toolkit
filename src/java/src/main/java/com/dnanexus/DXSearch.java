@@ -126,6 +126,13 @@ public final class DXSearch {
         @JsonProperty
         private final DescribeParameters describe;
 
+        // TODO: Processing on server side
+        @JsonProperty
+        private final Integer offset;
+        // TODO: Processing on server side
+        @JsonProperty
+        private final Integer amount;
+
         @JsonProperty
         private final JsonNode starting;
         @JsonProperty
@@ -156,6 +163,8 @@ public final class DXSearch {
             this.modified = previousQuery.modified;
             this.created = previousQuery.created;
             this.describe = previousQuery.describe;
+            this.offset = previousQuery.offset;
+            this.amount = previousQuery.amount;
 
             this.starting = next.isNull() ? null : next;
             this.limit = limit;
@@ -178,6 +187,8 @@ public final class DXSearch {
             this.type = builder.type;
             this.tags = builder.tags;
             this.describe = builder.describe;
+            this.offset = builder.offset;
+            this.amount = builder.amount;
             // For backwards compatibility we allow withProperty to be specified more than once,
             // with the different conditions being implicitly $and'ed.
             if (builder.properties.size() == 0) {
@@ -235,6 +246,8 @@ public final class DXSearch {
         private Date createdBefore;
         private Date createdAfter;
         private DescribeParameters describe;
+        private Integer offset;
+        private Integer amount;
 
         private final DXEnvironment env;
 
@@ -340,6 +353,34 @@ public final class DXSearch {
             Preconditions.checkState(this.describe == null,
                     "Cannot specify describe output more than once");
             this.describe = new DescribeParameters(describeOptions);
+            return this;
+        }
+
+        /**
+         * Requests to skip leading items.
+         *
+         * @param offset Amount of leading items to skip
+         *
+         * @return the same builder object
+         */
+        public FindDataObjectsRequestBuilder<T> withOffset(int offset) {
+            Preconditions.checkState(offset > 0,
+                    "Cannot specify a non-positive offset");
+            this.offset = offset;
+            return this;
+        }
+
+        /**
+         * Requests maximum amount of items in the result set.
+         *
+         * @param amount Maximum amount of items in result set
+         *
+         * @return the same builder object
+         */
+        public FindDataObjectsRequestBuilder<T> withAmount(int amount) {
+            Preconditions.checkState(amount > 0,
+                    "Cannot specify a non-positive amount");
+            this.amount = amount;
             return this;
         }
 
@@ -918,6 +959,10 @@ public final class DXSearch {
                 super(baseQuery);
             }
 
+            private ResultIterator(Integer offset, Integer amount) {
+                super(baseQuery, offset, amount);
+            }
+
             @Override
             public FindDataObjectsRequest getNextQuery(FindDataObjectsRequest query,
                     FindDataObjectsResultPage currentResultPage) {
@@ -992,7 +1037,7 @@ public final class DXSearch {
 
         @Override
         public Iterator<T> iterator() {
-            return new ResultIterator();
+            return new ResultIterator(baseQuery.offset, baseQuery.amount);
         }
     }
 
@@ -1946,6 +1991,9 @@ public final class DXSearch {
         private P currentPage;
         private int nextResultIndex = 0;
         private int currentPageNo = 0;
+        private int offset = 0;
+        private int maxAmount = 0;
+        private int fetchedAmount = 0;
 
         /**
          * Initializes the iterator with the specified initial query.
@@ -1957,6 +2005,32 @@ public final class DXSearch {
             this.query = initialQuery;
             this.currentPage = issueQuery(initialQuery);
             this.currentPageNo++;
+        }
+
+        /**
+         * Initializes the iterator with the specified initial query,
+         * amount of leading items to skip and max size of the result set.
+         *
+         * @param initialQuery the first query to execute (typically without the "starting"
+         *        parameter set)
+         * @param offset Amount of leading items to skip ("null" means zero offset)
+         * @param amount Maximum amount of items to return ("null" / 0 means to return all items)
+         */
+        private PaginatingFindResultIterator(Q initialQuery, Integer offset, Integer amount) {
+            this.query = initialQuery;
+            this.offset = (offset == null ? 0 : offset);
+            this.maxAmount = (amount == null ? 0 : amount);
+            this.currentPage = issueQuery(initialQuery);
+            this.currentPageNo++;
+
+            // TODO: Iterating offset on server side
+            for (int i = 0; i < this.offset; i++) {
+                if (hasNext()) {
+                    next();
+                } else {
+                    break;
+                }
+            }
         }
 
         /**
@@ -2008,6 +2082,9 @@ public final class DXSearch {
 
         @Override
         public boolean hasNext() {
+            if (maxAmount > 0 && (fetchedAmount - offset) >= maxAmount) {
+                return false;
+            }
             ensureNextElementAvailable();
             return nextResultIndex < currentPage.size();
         }
@@ -2024,6 +2101,7 @@ public final class DXSearch {
         @Override
         public T next() {
             ensureNextElementAvailable();
+            fetchedAmount++;
             return currentPage.get(nextResultIndex++);
         }
 

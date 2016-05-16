@@ -553,6 +553,68 @@ public class DXSearchTest {
     }
 
     /**
+     * Tests offset and amount.
+     */
+    @Test
+    public void testFindDataObjectsUsingOffset() {
+        List<DXRecord> records = Lists.newArrayList();
+        Set<String> recordIds = Sets.newHashSet();
+        for (int i = 0; i < 8; ++i) {
+            DXRecord record =
+                    DXRecord.newRecord().setProject(testProject)
+                            .setName("foo" + Integer.toString(i)).build();
+            records.add(record);
+            recordIds.add(record.getId());
+        }
+        List<DXRecord> allRecords =
+                DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
+                        .withClassRecord().execute().asList();
+        Assert.assertEquals(8, allRecords.size());
+
+        Set<DXRecord> leadingRecords = Sets.newHashSet();
+        Set<DXRecord> trailingRecords = Sets.newHashSet();
+        Iterator<DXRecord> iter = allRecords.iterator();
+        for (int i = 0; i < 3; i++) {
+            leadingRecords.add(iter.next());
+        }
+        int i = 1;
+        for (DXRecord record : allRecords) {
+            if (1 <= i && i <= 3) {
+                leadingRecords.add(record);
+            }
+            if (7 <= i && i == 8) {
+                trailingRecords.add(record);
+            }
+            i++;
+        }
+
+        List<DXRecord> recordsHavingOffset =
+                DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
+                        .withClassRecord().withOffset(3).execute().asList();
+        Assert.assertEquals(5, recordsHavingOffset.size());
+        for (DXRecord record : recordsHavingOffset) {
+            Assert.assertFalse("", leadingRecords.contains(record));
+        }
+
+        List<DXRecord> recordsHavingAmount =
+                DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
+                        .withClassRecord().withAmount(6).execute().asList();
+        Assert.assertEquals(6, recordsHavingAmount.size());
+        for (DXRecord record : recordsHavingAmount) {
+            Assert.assertFalse("", trailingRecords.contains(record));
+        }
+
+        List<DXRecord> recordsHavingOffsetAndAmount =
+                DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
+                        .withClassRecord().withOffset(3).withAmount(3).execute().asList();
+        Assert.assertEquals(3, recordsHavingOffsetAndAmount.size());
+        for (DXRecord record : recordsHavingOffsetAndAmount) {
+            Assert.assertFalse("", leadingRecords.contains(record));
+            Assert.assertFalse("", trailingRecords.contains(record));
+        }
+    }
+
+    /**
      * Tests paging through results.
      */
     @Test
