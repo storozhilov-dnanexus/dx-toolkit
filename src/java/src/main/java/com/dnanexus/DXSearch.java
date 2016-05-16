@@ -129,7 +129,6 @@ public final class DXSearch {
         // TODO: Processing on server side
         @JsonProperty
         private final Integer offset;
-        // TODO: Processing on server side
         @JsonProperty
         private final Integer amount;
 
@@ -363,9 +362,9 @@ public final class DXSearch {
          *
          * @return the same builder object
          */
-        public FindDataObjectsRequestBuilder<T> withOffset(int offset) {
-            Preconditions.checkState(offset > 0,
-                    "Cannot specify a non-positive offset");
+        public FindDataObjectsRequestBuilder<T> offset(int offset) {
+            Preconditions.checkState(offset >= 0,
+                    "Cannot specify a negative offset");
             this.offset = offset;
             return this;
         }
@@ -373,11 +372,11 @@ public final class DXSearch {
         /**
          * Requests maximum amount of items in the result set.
          *
-         * @param amount Maximum amount of items in result set
+         * @param amount Maximum amount of items in the result set
          *
          * @return the same builder object
          */
-        public FindDataObjectsRequestBuilder<T> withAmount(int amount) {
+        public FindDataObjectsRequestBuilder<T> amount(int amount) {
             Preconditions.checkState(amount > 0,
                     "Cannot specify a non-positive amount");
             this.amount = amount;
@@ -2031,6 +2030,7 @@ public final class DXSearch {
                     break;
                 }
             }
+            this.currentPageNo = 1;
         }
 
         /**

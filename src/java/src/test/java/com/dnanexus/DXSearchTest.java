@@ -557,14 +557,10 @@ public class DXSearchTest {
      */
     @Test
     public void testFindDataObjectsUsingOffset() {
-        List<DXRecord> records = Lists.newArrayList();
-        Set<String> recordIds = Sets.newHashSet();
         for (int i = 0; i < 8; ++i) {
             DXRecord record =
                     DXRecord.newRecord().setProject(testProject)
                             .setName("foo" + Integer.toString(i)).build();
-            records.add(record);
-            recordIds.add(record.getId());
         }
         List<DXRecord> allRecords =
                 DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
@@ -573,10 +569,6 @@ public class DXSearchTest {
 
         Set<DXRecord> leadingRecords = Sets.newHashSet();
         Set<DXRecord> trailingRecords = Sets.newHashSet();
-        Iterator<DXRecord> iter = allRecords.iterator();
-        for (int i = 0; i < 3; i++) {
-            leadingRecords.add(iter.next());
-        }
         int i = 1;
         for (DXRecord record : allRecords) {
             if (1 <= i && i <= 3) {
@@ -590,27 +582,73 @@ public class DXSearchTest {
 
         List<DXRecord> recordsHavingOffset =
                 DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
-                        .withClassRecord().withOffset(3).execute().asList();
+                        .withClassRecord().offset(3).execute().asList();
         Assert.assertEquals(5, recordsHavingOffset.size());
         for (DXRecord record : recordsHavingOffset) {
-            Assert.assertFalse("", leadingRecords.contains(record));
+            Assert.assertFalse(leadingRecords.contains(record));
         }
+
+        List<DXRecord> recordsZeroOffset =
+                DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
+                        .withClassRecord().offset(0).execute().asList();
+        Assert.assertEquals(allRecords, recordsZeroOffset);
 
         List<DXRecord> recordsHavingAmount =
                 DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
-                        .withClassRecord().withAmount(6).execute().asList();
+                        .withClassRecord().amount(6).execute().asList();
         Assert.assertEquals(6, recordsHavingAmount.size());
         for (DXRecord record : recordsHavingAmount) {
-            Assert.assertFalse("", trailingRecords.contains(record));
+            Assert.assertFalse(trailingRecords.contains(record));
         }
 
         List<DXRecord> recordsHavingOffsetAndAmount =
                 DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
-                        .withClassRecord().withOffset(3).withAmount(3).execute().asList();
+                        .withClassRecord().offset(3).amount(3).execute().asList();
         Assert.assertEquals(3, recordsHavingOffsetAndAmount.size());
         for (DXRecord record : recordsHavingOffsetAndAmount) {
-            Assert.assertFalse("", leadingRecords.contains(record));
-            Assert.assertFalse("", trailingRecords.contains(record));
+            Assert.assertFalse(leadingRecords.contains(record));
+            Assert.assertFalse(trailingRecords.contains(record));
+        }
+
+        DXSearch.FindDataObjectsResult<DXRecord> findResult =
+                DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
+                        .withClassRecord().offset(3).amount(3).execute(2);
+        Iterator<DXRecord> iter = findResult.iterator();
+        List<DXRecord> pagedRecordsHavingOffsetAndAmount = Lists.newArrayList(iter);
+        Assert.assertEquals(2, ((DXSearch.FindDataObjectsResult<DXRecord>.ResultIterator) iter).pageNo());
+        Assert.assertEquals(3, pagedRecordsHavingOffsetAndAmount.size());
+        for (DXRecord record : pagedRecordsHavingOffsetAndAmount) {
+            Assert.assertFalse(leadingRecords.contains(record));
+            Assert.assertFalse(trailingRecords.contains(record));
+        }
+
+        List<DXRecord> recordsTooBigOffset =
+                DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
+                        .withClassRecord().offset(100).execute().asList();
+        Assert.assertEquals(0, recordsTooBigOffset.size());
+
+        try {
+            DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
+                    .withClassRecord().offset(-5).execute().asList();
+            Assert.assertTrue("No IllegalStateException thrown on invalid input", false);
+        } catch (IllegalStateException ex) {
+            // Nothing here
+        }
+
+        try {
+            DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
+                    .withClassRecord().amount(-3).execute().asList();
+            Assert.assertTrue("No IllegalStateException thrown on invalid input", false);
+        } catch (IllegalStateException ex) {
+            // Nothing here
+        }
+
+        try {
+            DXSearch.findDataObjects().inProject(testProject).nameMatchesGlob("foo*")
+                    .withClassRecord().amount(0).execute().asList();
+            Assert.assertTrue("No IllegalStateException thrown on invalid input", false);
+        } catch (IllegalStateException ex) {
+            // Nothing here
         }
     }
 
