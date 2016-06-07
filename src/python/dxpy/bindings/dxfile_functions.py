@@ -466,3 +466,46 @@ def upload_string(to_upload, media_type=None, keep_open=False, wait_on_close=Fal
         handler.close(block=wait_on_close, **remaining_kwargs)
 
     return handler
+
+def download_folder(project, destdir, folder="/", chunksize=dxfile.DEFAULT_BUFFER_SIZE):
+    '''
+    :param project: Project ID to use as context for this download.
+    :type project: string
+    :param folder: Path to the remote folder to download
+    :type folder: string
+    :param destdir: Local destination location
+    :type destdir: string
+
+    Downloads the remote *folder* of *project* and saves it to *destdir* location.
+
+    Example::
+
+        download_folder("project-xxxx", "/home/jsmith/input", folder="/input")
+
+    '''
+    
+    def compose_dest_dir(remote_folder):
+        return os.path.join(destdir, remote_folder[1:] if folder == "/" else remote_folder[len(folder) + 1:])
+
+    # TODO: Check dest directory exists and not empty
+
+    print("destdir is {}".format(destdir))
+    if not os.path.isdir(destdir):
+        os.makedirs(destdir)
+
+    project_handler = dxpy.get_handler(project)
+
+    for remote_folder in project_handler.describe(input_params={'folders': True})['folders']:
+        if not remote_folder.startswith(folder):
+            continue
+        dest_folder = compose_dest_dir(remote_folder)
+        if not os.path.isdir(dest_folder):
+            print("Creating destination folder: '{}'".format(dest_folder))
+            os.makedirs(dest_folder)
+
+    for remote_file in dxpy.search.find_data_objects(classname='file', state='closed', project=project, folder=folder,
+            recurse=True, describe=True):
+        print("Remote file is {}".format(remote_file))
+        dest_filename = os.path.join(compose_dest_dir(remote_file['describe']['folder']), remote_file['describe']['name'])
+        print("Downloading {}/{} to {}".format(remote_file['describe']['folder'], remote_file['describe']['name'], dest_filename))
+        download_dxfile(remote_file['describe']['id'], dest_filename, chunksize=chunksize, project=project)

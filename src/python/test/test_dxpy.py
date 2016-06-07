@@ -661,6 +661,56 @@ class TestDXFile(unittest.TestCase):
         self.assertEquals(parts['1']['size'], 5242880)
         self.assertEquals(parts['2']['size'], 2952504)
 
+class TestFolder(unittest.TestCase):
+
+    def setUp(self):
+        setUpTempProjects(self)
+        self.temp_dir = tempfile.mkdtemp(prefix="TestFolder.")
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+        tearDownTempProjects(self)
+
+    def test_download_folder(self):
+        dxproject = dxpy.DXProject(self.proj_id)
+        dxproject.new_folder("/a/b/c/d", parents=True)
+        dxproject.new_folder("/a/e/f/g", parents=True)
+        dxproject.new_folder("/h/i/j/k", parents=True)
+
+        #dxpy.download_folder(dxproject, os.path.join(self.temp_dir, "a"), folder="/a")
+
+        folders = []
+        i = 1
+        for subfolder in ["/", "a", "b", "c", "d"]:
+            folders.append(subfolder)
+            folder = os.path.join(*folders)
+            print("Initializing '{}' folder".format(folder))
+            with dxpy.new_dxfile(name="file_{}.txt".format(i), folder=folder) as dxfile:
+                dxfile.write("Line 1\nLine 2\nLine 3\n")
+            dxfile.wait_on_close()
+            dxrecord = dxpy.new_dxrecord(name="record_{}".format(i), folder=folder)
+            # TODO Create DXExecutable in folder
+            # TODO Create DXWorkflow in folder
+            i += 1
+
+        dxpy.download_folder(self.proj_id, os.path.join(self.temp_dir, "root"))
+        dxpy.download_folder(self.proj_id, os.path.join(self.temp_dir, "a"), folder="/a")
+
+#        dxrecord = dxpy.new_dxrecord()
+#        dxrecord.move("/a")
+#        dxrecord.rename("new_record")
+
+        print("'/' folder content is {}".format(dxproject.list_folder(describe=True)))
+        print("")
+        print("'/a' folder content is {}".format(dxproject.list_folder("/a", describe=True)))
+        #listf = dxproject.list_folder("/a", describe=True)
+        #listf = dxproject.list_folder("/a", describe=False)
+        #self.assertEqual(listf["objects"], [])
+        #listf = dxproject.list_folder("/a/b/c")
+        #self.assertEqual(get_objects_from_listf(listf), [dxrecord.get_id()])
+        #desc = dxrecord.describe()
+        #self.assertEqual(desc["folder"], "/a/b/c")
+        #self.assertEquals(0, 1)
 
 @unittest.skipUnless(testutil.TEST_GTABLE, 'skipping test that would create a GTable')
 class TestDXGTable(unittest.TestCase):
