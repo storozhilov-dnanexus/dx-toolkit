@@ -19,7 +19,7 @@
 
 from __future__ import print_function, unicode_literals, division, absolute_import
 
-import os, unittest, tempfile, filecmp, time, json, sys
+import os, unittest, tempfile, filecmp, time, json, sys, stat
 import shutil
 import string
 import subprocess
@@ -665,10 +665,14 @@ class TestFolder(unittest.TestCase):
 
     def setUp(self):
         setUpTempProjects(self)
-        self.temp_dir = tempfile.mkdtemp(prefix="TestFolder.")
+        self.temp_dir = tempfile.mkdtemp(prefix="dx-toolkit.dxpy.TestFolder.")
+        self.temp_file_fd, self.temp_file_path = tempfile.mkstemp(prefix="dx-toolkit.dxpy.TestFile.")
+        with os.fdopen(self.temp_file_fd, 'w') as temp_file:
+            temp_file.write('42')
 
     def tearDown(self):
         shutil.rmtree(self.temp_dir)
+        os.remove(self.temp_file_path)
         tearDownTempProjects(self)
 
     def test_download_folder(self):
@@ -717,6 +721,16 @@ class TestFolder(unittest.TestCase):
             print("Test filename is '{}'".format(filename))
             self.assertTrue(os.path.isfile(filename))
             i += 1
+
+        # Checking download to existing file
+        self.assertRaises(DXFileError, dxpy.download_folder, self.proj_id, self.temp_file_path)
+        # Checking download to non-empty directory
+        self.assertRaises(DXFileError, dxpy.download_folder, self.proj_id, self.temp_dir)
+        # Checking download to non-writable directory
+        non_writable_dir_name = os.path.join(self.temp_dir, "non_writable")
+        os.mkdir(non_writable_dir_name)
+        os.chmod(non_writable_dir_name, stat.S_IRUSR | stat.S_IXUSR)
+        self.assertRaises(DXFileError, dxpy.download_folder, self.proj_id, non_writable_dir_name)
 
 @unittest.skipUnless(testutil.TEST_GTABLE, 'skipping test that would create a GTable')
 class TestDXGTable(unittest.TestCase):

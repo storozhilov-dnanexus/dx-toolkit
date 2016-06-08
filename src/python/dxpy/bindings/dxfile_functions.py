@@ -487,10 +487,15 @@ def download_folder(project, destdir, folder="/", chunksize=dxfile.DEFAULT_BUFFE
     def compose_dest_dir(remote_folder):
         return os.path.join(destdir, remote_folder[1:] if folder == "/" else remote_folder[len(folder) + 1:])
 
-    # TODO: Check dest directory exists and not empty
-
-    print("destdir is {}".format(destdir))
-    if not os.path.isdir(destdir):
+    if os.path.exists(destdir):
+        if os.path.isdir(destdir):
+            if os.listdir(destdir) != []:
+                raise DXFileError("Destination directory '{}' exists, but not empty".format(destdir))
+            if not os.access(destdir, os.W_OK):
+                raise DXFileError("Destination directory '{}' exists, but not writable".format(destdir))
+        else:
+            raise DXFileError("Destination location '{}' exists, but not a directory".format(destdir))
+    else:
         os.makedirs(destdir)
 
     for remote_folder in dxpy.get_handler(project).describe(input_params={'folders': True})['folders']:
