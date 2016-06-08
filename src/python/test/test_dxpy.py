@@ -689,13 +689,10 @@ class TestFolder(unittest.TestCase):
         for f in ["/", "a", "b", "c", "d"]:
             path.append(f)
             folder = os.path.join(*path)
-            print("Initializing '{}' folder".format(folder))
             with dxpy.new_dxfile(name="file_{}.txt".format(i), folder=folder) as dxfile:
                 dxfile.write("{}-th\n file\n content\n".format(i))
             dxfile.wait_on_close()
             dxrecord = dxpy.new_dxrecord(name="record_{}".format(i), folder=folder)
-            # TODO Create DXExecutable in folder
-            # TODO Create DXWorkflow in folder
             i += 1
 
         # Checking root directory download
@@ -706,7 +703,6 @@ class TestFolder(unittest.TestCase):
         for f in [root_dest_dir, "a", "b", "c", "d"]:
             path.append(f)
             filename = os.path.join(os.path.join(*path), "file_{}.txt".format(i))
-            print("Test filename is '{}'".format(filename))
             self.assertTrue(os.path.isfile(filename))
             self.assertEquals("{}-th\n file\n content\n".format(i), open(filename, "r").read())
             i += 1
@@ -719,7 +715,6 @@ class TestFolder(unittest.TestCase):
         for f in [a_dest_dir, "b", "c", "d"]:
             path.append(f)
             filename = os.path.join(os.path.join(*path), "file_{}.txt".format(i))
-            print("Test filename is '{}'".format(filename))
             self.assertTrue(os.path.isfile(filename))
             self.assertEquals("{}-th\n file\n content\n".format(i), open(filename, "r").read())
             i += 1

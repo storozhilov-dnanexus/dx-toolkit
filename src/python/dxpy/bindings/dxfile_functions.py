@@ -503,12 +503,13 @@ def download_folder(project, destdir, folder="/", chunksize=dxfile.DEFAULT_BUFFE
             continue
         dest_folder = compose_dest_dir(remote_folder)
         if not os.path.isdir(dest_folder):
-            print("Creating destination folder: '{}'".format(dest_folder))
+            logger.debug("Creating destination folder: '%s'", dest_folder)
             os.makedirs(dest_folder)
 
     for remote_file in dxpy.search.find_data_objects(classname='file', state='closed', project=project, folder=folder,
             recurse=True, describe=True):
-        print("Remote file is {}".format(remote_file))
         dest_filename = os.path.join(compose_dest_dir(remote_file['describe']['folder']), remote_file['describe']['name'])
-        print("Downloading {}/{} to {}".format(remote_file['describe']['folder'], remote_file['describe']['name'], dest_filename))
+        logger.debug("Downloading '%s/%s' remote file to '%s' location",
+                ("" if remote_file['describe']['folder'] == "/" else remote_file['describe']['folder']),
+                remote_file['describe']['name'], dest_filename)
         download_dxfile(remote_file['describe']['id'], dest_filename, chunksize=chunksize, project=project)
