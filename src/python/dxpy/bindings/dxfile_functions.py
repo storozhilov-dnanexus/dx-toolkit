@@ -471,12 +471,12 @@ def download_folder(project, destdir, folder="/", chunksize=dxfile.DEFAULT_BUFFE
     '''
     :param project: Project ID to use as context for this download.
     :type project: string
-    :param folder: Path to the remote folder to download
-    :type folder: string
     :param destdir: Local destination location
     :type destdir: string
+    :param folder: Path to the remote folder to download
+    :type folder: string
 
-    Downloads the remote *folder* of *project* and saves it to *destdir* location.
+    Downloads the remote *folder* of *project* and saves it to *destdir* local location.
 
     Example::
 
@@ -493,9 +493,7 @@ def download_folder(project, destdir, folder="/", chunksize=dxfile.DEFAULT_BUFFE
     if not os.path.isdir(destdir):
         os.makedirs(destdir)
 
-    project_handler = dxpy.get_handler(project)
-
-    for remote_folder in project_handler.describe(input_params={'folders': True})['folders']:
+    for remote_folder in dxpy.get_handler(project).describe(input_params={'folders': True})['folders']:
         if not remote_folder.startswith(folder):
             continue
         dest_folder = compose_dest_dir(remote_folder)

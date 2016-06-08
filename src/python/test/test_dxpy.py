@@ -673,17 +673,18 @@ class TestFolder(unittest.TestCase):
 
     def test_download_folder(self):
         dxproject = dxpy.DXProject(self.proj_id)
+
+        # Creating remote folders
         dxproject.new_folder("/a/b/c/d", parents=True)
         dxproject.new_folder("/a/e/f/g", parents=True)
         dxproject.new_folder("/h/i/j/k", parents=True)
 
-        #dxpy.download_folder(dxproject, os.path.join(self.temp_dir, "a"), folder="/a")
-
-        folders = []
+        # Filling remote folders with objects
+        path = []
         i = 1
-        for subfolder in ["/", "a", "b", "c", "d"]:
-            folders.append(subfolder)
-            folder = os.path.join(*folders)
+        for f in ["/", "a", "b", "c", "d"]:
+            path.append(f)
+            folder = os.path.join(*path)
             print("Initializing '{}' folder".format(folder))
             with dxpy.new_dxfile(name="file_{}.txt".format(i), folder=folder) as dxfile:
                 dxfile.write("Line 1\nLine 2\nLine 3\n")
@@ -693,24 +694,29 @@ class TestFolder(unittest.TestCase):
             # TODO Create DXWorkflow in folder
             i += 1
 
-        dxpy.download_folder(self.proj_id, os.path.join(self.temp_dir, "root"))
-        dxpy.download_folder(self.proj_id, os.path.join(self.temp_dir, "a"), folder="/a")
+        # Checking root directory download
+        root_dest_dir = os.path.join(self.temp_dir, "root")
+        dxpy.download_folder(self.proj_id, root_dest_dir)
+        path = []
+        i = 1
+        for f in [root_dest_dir, "a", "b", "c", "d"]:
+            path.append(f)
+            filename = os.path.join(os.path.join(*path), "file_{}.txt".format(i))
+            print("Test filename is '{}'".format(filename))
+            self.assertTrue(os.path.isfile(filename))
+            i += 1
 
-#        dxrecord = dxpy.new_dxrecord()
-#        dxrecord.move("/a")
-#        dxrecord.rename("new_record")
-
-        print("'/' folder content is {}".format(dxproject.list_folder(describe=True)))
-        print("")
-        print("'/a' folder content is {}".format(dxproject.list_folder("/a", describe=True)))
-        #listf = dxproject.list_folder("/a", describe=True)
-        #listf = dxproject.list_folder("/a", describe=False)
-        #self.assertEqual(listf["objects"], [])
-        #listf = dxproject.list_folder("/a/b/c")
-        #self.assertEqual(get_objects_from_listf(listf), [dxrecord.get_id()])
-        #desc = dxrecord.describe()
-        #self.assertEqual(desc["folder"], "/a/b/c")
-        #self.assertEquals(0, 1)
+        # Checking non-root directory download
+        a_dest_dir = os.path.join(self.temp_dir, "a")
+        dxpy.download_folder(self.proj_id, a_dest_dir, folder="/a")
+        path = []
+        i = 2
+        for f in [a_dest_dir, "b", "c", "d"]:
+            path.append(f)
+            filename = os.path.join(os.path.join(*path), "file_{}.txt".format(i))
+            print("Test filename is '{}'".format(filename))
+            self.assertTrue(os.path.isfile(filename))
+            i += 1
 
 @unittest.skipUnless(testutil.TEST_GTABLE, 'skipping test that would create a GTable')
 class TestDXGTable(unittest.TestCase):
