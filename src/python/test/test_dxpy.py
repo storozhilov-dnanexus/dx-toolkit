@@ -691,7 +691,7 @@ class TestFolder(unittest.TestCase):
             folder = os.path.join(*path)
             print("Initializing '{}' folder".format(folder))
             with dxpy.new_dxfile(name="file_{}.txt".format(i), folder=folder) as dxfile:
-                dxfile.write("Line 1\nLine 2\nLine 3\n")
+                dxfile.write("{}-th\n file\n content\n".format(i))
             dxfile.wait_on_close()
             dxrecord = dxpy.new_dxrecord(name="record_{}".format(i), folder=folder)
             # TODO Create DXExecutable in folder
@@ -708,6 +708,7 @@ class TestFolder(unittest.TestCase):
             filename = os.path.join(os.path.join(*path), "file_{}.txt".format(i))
             print("Test filename is '{}'".format(filename))
             self.assertTrue(os.path.isfile(filename))
+            self.assertEquals("{}-th\n file\n content\n".format(i), open(filename, "r").read())
             i += 1
 
         # Checking non-root directory download
@@ -720,6 +721,7 @@ class TestFolder(unittest.TestCase):
             filename = os.path.join(os.path.join(*path), "file_{}.txt".format(i))
             print("Test filename is '{}'".format(filename))
             self.assertTrue(os.path.isfile(filename))
+            self.assertEquals("{}-th\n file\n content\n".format(i), open(filename, "r").read())
             i += 1
 
         # Checking download to existing file
