@@ -483,7 +483,7 @@ def download_folder(project, destdir, folder="/", chunksize=dxfile.DEFAULT_BUFFE
         download_folder("project-xxxx", "/home/jsmith/input", folder="/input")
 
     '''
-    
+
     def compose_dest_dir(remote_folder):
         return os.path.join(destdir, remote_folder[1:] if folder == "/" else remote_folder[len(folder) + 1:])
 
