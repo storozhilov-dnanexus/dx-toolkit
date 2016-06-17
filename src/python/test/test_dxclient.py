@@ -5546,6 +5546,36 @@ class TestDXBuildApp(DXTestCaseBuildApps):
         run("dx build --dry-run " + app_dir)
         self.assertEqual(len(list(dxpy.find_data_objects(name="minimal_applet_dry_run"))), 0)
 
+    def test_build_applet_input_specs_suggestions(self):
+        app_spec = {
+            "name": "dx_build_applet_invalid_input_specs_suggestions",
+            "dxapi": "1.0.0",
+            "runSpec": {"file": "code.py", "interpreter": "python2.7"},
+            "inputSpec": [{
+                "name": "reference",
+                "class": "gtable",
+                "suggestions": [{
+                    "name": "Reference Genomes",
+                    "project": "project-1234567890",
+                    "path": "/foo/bar",
+                    "class": "gtable"
+                    },{
+                    "name": "Modest Mouse",
+                    "value": {
+                        "$dnanexus_link": {
+                            "project": "project-0987654321",
+                            "id": "gtable-7862389"
+                            }
+                        }
+                    }]
+                }],
+            "outputSpec": [],
+            "version": "1.0.0"
+            }
+        app_dir = self.write_app_directory("dx_build_applet_invalid_input_specs_suggestions", json.dumps(app_spec), "code.py")
+        with self.assertSubprocessFailure(stderr_regexp='Suggested input refers to non-accessible project', exit_code=2):
+            run("dx build --json " + app_dir)
+
     @unittest.skipUnless(testutil.TEST_RUN_JOBS, 'skipping test that would run jobs')
     def test_build_applet_and_run_immediately(self):
         app_spec = {
