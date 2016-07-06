@@ -577,6 +577,7 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
             exception_msg = _extract_msg_from_last_exception()
             if isinstance(e, _expected_exceptions):
                 if response is not None and response.status == 503:
+                    # TODO: PTFM-14073: '503' response code handling is here
                     seconds_to_wait = _extract_retry_after_timeout(response)
                     logger.warn("%s %s: %s. Waiting %d seconds due to server unavailability...",
                                 method, url, exception_msg, seconds_to_wait)
