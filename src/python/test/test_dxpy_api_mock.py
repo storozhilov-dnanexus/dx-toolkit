@@ -22,6 +22,8 @@ import unittest
 import tempfile
 import subprocess
 import time
+import requests
+import json
 
 #from __future__ import print_function, unicode_literals, division, absolute_import
 
@@ -40,40 +42,63 @@ import time
 #from dxpy.utils import pretty_print, warn
 #from dxpy.utils.resolver import resolve_path, resolve_existing_path, ResolutionError, is_project_explicit
 
-class TestDxpy(unittest.TestCase):
-    apiserverMockHandlerFilename = None
+class TestDxpyApiMock(unittest.TestCase):
+    apiServerMockHandlerFilename = None
+    apiServerMockSubprocess = None
 
     def setUp(self):
         # Preparing APIserver mock object HTTP-handler code
-        fd, self.apiserverMockHandlerFilename = tempfile.mkstemp(suffix=".py", prefix="apiserver_mock_handler_definition.")
+        fd, self.apiServerMockHandlerFilename = tempfile.mkstemp(suffix=".py", prefix="apiserver_mock_handler_definition.")
         fh = os.fdopen(fd, 'w')
         fh.write("""\
 from BaseHTTPServer import BaseHTTPRequestHandler
+import json
+import datetime
 
 class MockHandler(BaseHTTPRequestHandler):
+    stats = {
+        'postRequests': []}
+
     def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(self.stats))
+
+    def do_POST(self):
+        #self.stats['postRequests'].append({
+        #        'client_address': self.client_address,
+        #        'command': self.command,
+        #        'path': self.path,
+        #        'request_version': self.request_version,
+        #        'headers': self.headers})
+        self.stats['postRequests'].append({
+                'timestamp': datetime.datetime.now().isoformat(),
+                'client_address': self.client_address,
+                'command': self.command,
+                'path': self.path,
+                'request_version': self.request_version,})
         self.send_response(200)
         self.send_header('Content-type','text/html')
         self.end_headers()
-        self.wfile.write("Hello World !")
-        return
+        self.wfile.write('Hello from APIserver mock object')
 """)
         fh.close()
         # Starting APIserver mock-object
         apiServerMockFilename = os.path.join(os.path.dirname(os.path.abspath(__file__)), "apiserver_mock.py")
-        self.apiServerMockSubprocess = subprocess.Popen([apiServerMockFilename, self.apiserverMockHandlerFilename])
-        time.sleep(1)
+        self.apiServerMockSubprocess = subprocess.Popen([apiServerMockFilename, self.apiServerMockHandlerFilename])
+        time.sleep(0.2)
 
     def tearDown(self):
         # Stopping APIserver mock-object
         self.apiServerMockSubprocess.kill()
         # Removing mock object HTTP-handler code
-        os.remove(self.apiserverMockHandlerFilename)
-        return
+        os.remove(self.apiServerMockHandlerFilename)
 
     def test_exponential_retry(self):
-        time.sleep(1)
-        self.assertTrue(True)
+        requests.post("http://127.0.0.1:8080/file/new", data = {'key':'value'})
+        apiServerStats = json.loads(requests.get("http://127.0.0.1:8080/stats").content)
+        print("APIserver stats is '{}'".format(apiServerStats))
 
 if __name__ == '__main__':
     unittest.main()
