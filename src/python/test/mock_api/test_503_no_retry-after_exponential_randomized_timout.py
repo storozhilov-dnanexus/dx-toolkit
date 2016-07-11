@@ -32,20 +32,27 @@ class MockHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(self.stats))
 
     def do_POST(self):
-        #self.stats['postRequests'].append({
-        #        'client_address': self.client_address,
-        #        'command': self.command,
-        #        'path': self.path,
-        #        'request_version': self.request_version,
-        #        'headers': self.headers})
         self.stats['postRequests'].append({
                 'timestamp': datetime.datetime.now().isoformat(),
                 'client_address': self.client_address,
                 'command': self.command,
                 'path': self.path,
                 'request_version': self.request_version,})
-        self.send_response(200)
-        self.send_header('Content-type','text/html')
-        self.end_headers()
-        self.wfile.write('Hello from APIserver mock object')
 
+        if len(self.stats['postRequests']) > 8:
+            raise Exception('Too many requests')
+        elif len(self.stats['postRequests']) == 8:
+            self.send_response(200)
+            self.send_header('Content-type','application/json')
+            self.end_headers()
+            self.wfile.write('{ "id": "user-johnsmith" }')
+        elif len(self.stats['postRequests']) == 3:
+            self.send_response(500)
+            self.send_header('Content-type','text/plain')
+            self.end_headers()
+            self.wfile.write('500: Internal Server Error')
+        else:
+            self.send_response(503)
+            self.send_header('Content-type','text/plain')
+            self.end_headers()
+            self.wfile.write('503: Service Unavailable')

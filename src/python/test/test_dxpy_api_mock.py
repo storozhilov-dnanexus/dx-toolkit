@@ -38,7 +38,7 @@ class TestDxpyApiMock(unittest.TestCase):
         apiServerMockFilename = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                 "mock_api", "apiserver_mock.py")
         apiServerMockHandlerFilename = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                "mock_api", "test_503_no-retry-after_exponential_randomized_timout.py")
+                "mock_api", "test_503_no_retry-after_exponential_randomized_timout.py")
         self.apiServerMockSubprocess = subprocess.Popen([apiServerMockFilename, apiServerMockHandlerFilename, str(apiServerTcpPort)])
         time.sleep(0.2)
 
@@ -48,7 +48,7 @@ class TestDxpyApiMock(unittest.TestCase):
         # TODO: Restoring DXPY env settings
 
     def test_503_exponential_retry(self):
-        res = dxpy.DXHTTPRequest("/system/whoami", {}, want_full_response=True)
+        res = dxpy.DXHTTPRequest("/system/whoami", {}, want_full_response=True, always_retry=True)
         apiServerStats = json.loads(requests.get("http://127.0.0.1:8080/stats").content)
         print("APIserver stats is '{}'".format(apiServerStats))
 
