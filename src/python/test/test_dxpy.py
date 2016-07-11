@@ -2342,8 +2342,8 @@ class TestHTTPResponses(unittest.TestCase):
         dxpy.DXHTTPRequest('/system/comeBackLater', {'waitUntil': server_time + 20000, 'setRetryAfter': False})
         end_time = int(time.time() * 1000)
         time_elapsed = end_time - start_time
-        self.assertTrue(50000 <= time_elapsed)
-        self.assertTrue(time_elapsed <= 70000)
+        self.assertTrue(20000 <= time_elapsed)
+        self.assertTrue(time_elapsed <= 30000)
 
     def test_generic_exception_not_retryable(self):
         self.assertFalse(dxpy._is_retryable_exception(KeyError('oops')))

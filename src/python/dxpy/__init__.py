@@ -335,8 +335,7 @@ def _extract_retry_after_timeout(response, num_attempts):
             # such responses anyway.
             seconds_to_wait = DEFAULT_RETRY_AFTER_503_INTERVAL
     else:
-        print("Generating random number b/w {} and {}".format(1, min(2 ** num_attempts, 600)))
-        seconds_to_wait = randint(1, min(2 ** num_attempts, 600))
+        seconds_to_wait = randint(2 ** (num_attempts - 1), min(2 ** num_attempts, 600))
     return max(1, seconds_to_wait)
 
 
@@ -593,8 +592,8 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
                     try_index_503 += 1
                     continue
 
-                # Resetting 503 try index, cause another type of error happened,
-                # which impies max retries check
+                # Resetting 503 try index because another type of error happened,
+                # which implies switching to max retries check mode
                 try_index_503 = 0
 
                 # Total number of allowed tries is the initial try + up to

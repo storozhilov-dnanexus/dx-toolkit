@@ -25,6 +25,7 @@ import time
 import json
 import dxpy
 import requests
+import dateutil.parser
 
 class TestDxpyApiMock(unittest.TestCase):
     apiServerMockSubprocess = None
@@ -50,7 +51,11 @@ class TestDxpyApiMock(unittest.TestCase):
     def test_503_exponential_retry(self):
         res = dxpy.DXHTTPRequest("/system/whoami", {}, want_full_response=True, always_retry=True)
         apiServerStats = json.loads(requests.get("http://127.0.0.1:8080/stats").content)
-        print("APIserver stats is '{}'".format(apiServerStats))
+        for i in range(4, 7):
+            tried = dateutil.parser.parse(apiServerStats['postRequests'][i]['timestamp'])
+            retried = dateutil.parser.parse(apiServerStats['postRequests'][i + 1]['timestamp'])
+            interval = (retried - tried).total_seconds()
+            self.assertTrue(((i - 4) ** 2) <= interval)
 
 if __name__ == '__main__':
     unittest.main()
