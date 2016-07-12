@@ -322,21 +322,22 @@ def _extract_msg_from_last_exception():
         return traceback.format_exc().splitlines()[-1].strip()
 
 
-def _extract_retry_after_timeout(response, num_attempts):
-    '''Returns the time in seconds that the server is asking us to
-    wait. The information is deduced from the server http response.'''
-    if 'retry-after' in response.headers:
+def _calculate_retry_delay(response, num_attempts):
+    if response is not None and response.status == 503 and 'retry-after' in response.headers:
         try:
-            seconds_to_wait = int(response.headers['retry-after'])
+            delay = int(response.headers['retry-after'])
         except ValueError:
             # retry-after could be formatted as absolute time
             # instead of seconds to wait. We don't know how to
             # parse that, but the apiserver doesn't generate
             # such responses anyway.
-            seconds_to_wait = DEFAULT_RETRY_AFTER_503_INTERVAL
+            delay = DEFAULT_RETRY_AFTER_503_INTERVAL
     else:
-        seconds_to_wait = randint(min(2 ** (num_attempts - 1), 300), min(2 ** num_attempts, 600))
-    return max(1, seconds_to_wait)
+        logger.warn("Generating random number between %d and %d",
+                min(2 ** (num_attempts - 1), DEFAULT_TIMEOUT / 2),
+                min(2 ** num_attempts, DEFAULT_TIMEOUT))
+        delay = randint(min(2 ** (num_attempts - 1), DEFAULT_TIMEOUT / 2), min(2 ** num_attempts, DEFAULT_TIMEOUT))
+    return max(1, delay)
 
 
 # Truncate the message, if the error injection flag is on, and other
@@ -472,7 +473,7 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
         rewind_input_buffer_offset = data.tell()
 
     try_index = 0
-    try_index_503 = 0
+    replies_503_amount = 0
     while True:
         success, time_started = True, None
         response = None
@@ -580,27 +581,14 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
             success = False
             exception_msg = _extract_msg_from_last_exception()
             if isinstance(e, _expected_exceptions):
-                if response is not None and response.status == 503:
-                    seconds_to_wait = _extract_retry_after_timeout(response, try_index_503 + 1)
-                    logger.warn("%s %s: %s. Waiting %d seconds after %d try due to server unavailability...",
-                            method, url, exception_msg, seconds_to_wait, try_index_503 + 1)
-                    time.sleep(seconds_to_wait)
-                    # Note, we escape the "except" block here without
-                    # incrementing try_index because 503 responses with
-                    # Retry-After should not count against the number of
-                    # permitted retries.
-                    try_index_503 += 1
-                    continue
-
-                # Resetting 503 try index because another type of error happened,
-                # which implies switching to max retries check mode
-                try_index_503 = 0
-
                 # Total number of allowed tries is the initial try + up to
                 # (max_retries) subsequent retries.
-                total_allowed_tries = max_retries + 1
+                if response is not None and response.status == 503:
+                    replies_503_amount += 1
+                total_allowed_tries = max_retries + replies_503_amount
                 ok_to_retry = False
                 is_retryable = always_retry or (method == 'GET') or _is_retryable_exception(e)
+                has_retry_after = response is not None and response.status == 503 and 'retry-after' in response.headers
                 # Because try_index is not incremented until we escape this
                 # iteration of the loop, try_index is equal to the number of
                 # tries that have failed so far, minus one. Test whether we
@@ -608,7 +596,7 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
                 #
                 # BadStatusLine ---  server did not return anything
                 # BadJSONInReply --- server returned JSON that didn't parse properly
-                if try_index + 1 < total_allowed_tries:
+                if has_retry_after or try_index < total_allowed_tries:
                     if response is None or \
                        isinstance(e, (exceptions.ContentLengthError, BadStatusLine, exceptions.BadJSONInReply, \
                                       urllib3.exceptions.ProtocolError, exceptions.UrllibInternalError)):
@@ -629,10 +617,10 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
                 if ok_to_retry:
                     if rewind_input_buffer_offset is not None:
                         data.seek(rewind_input_buffer_offset)
-                    delay = min(2 ** try_index, DEFAULT_TIMEOUT)
+                    delay = _calculate_retry_delay(response, try_index + 1)
                     range_str = (' (range=%s)' % (headers['Range'],)) if 'Range' in headers else ''
                     logger.warn("%s %s: %s. Waiting %d seconds before retry %d of %d... %s",
-                                method, url, exception_msg, delay, try_index + 1, max_retries, range_str)
+                                method, url, exception_msg, delay, try_index + 1, total_allowed_tries, range_str)
                     time.sleep(delay)
                     try_index += 1
                     continue
