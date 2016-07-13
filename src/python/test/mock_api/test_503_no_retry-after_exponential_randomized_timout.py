@@ -20,39 +20,81 @@
 from BaseHTTPServer import BaseHTTPRequestHandler
 import json
 import datetime
+import re
+
+testing_mode = None
+testing_stats = None
 
 class MockHandler(BaseHTTPRequestHandler):
-    stats = {
-        'postRequests': []}
 
     def do_GET(self):
+        global testing_mode
+        global testing_stats
+
+        m = re.match("/set_testing_mode/(\\w+)", self.path)
+        if not m:
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(testing_stats))
+            return
+        new_mode = m.groups()[0]
+        if new_mode not in ['continuous', 'mixed']:
+            self.send_response(500)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write("Invalid mode: '{}'".format(new_mode))
+            return
+        testing_mode = new_mode
+        testing_stats = {'postRequests': []}
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
         self.end_headers()
-        self.wfile.write(json.dumps(self.stats))
+        self.wfile.write(json.dumps({'mode': testing_mode}))
 
     def do_POST(self):
-        self.stats['postRequests'].append({
+        global testing_mode
+        global testing_stats
+
+        testing_stats['postRequests'].append({
                 'timestamp': datetime.datetime.now().isoformat(),
                 'client_address': self.client_address,
                 'command': self.command,
                 'path': self.path,
                 'request_version': self.request_version,})
-
-        if len(self.stats['postRequests']) > 8:
-            raise Exception('Too many requests')
-        elif len(self.stats['postRequests']) == 8:
-            self.send_response(200)
-            self.send_header('Content-type','application/json')
-            self.end_headers()
-            self.wfile.write('{ "id": "user-johnsmith" }')
-        elif len(self.stats['postRequests']) == 3:
-            self.send_response(500)
-            self.send_header('Content-type','text/plain')
-            self.end_headers()
-            self.wfile.write('500: Internal Server Error')
+        if testing_mode == 'continuous':
+            if len(testing_stats['postRequests']) > 5:
+                raise Exception('Too many requests')
+            elif len(testing_stats['postRequests']) == 5:
+                self.send_response(200)
+                self.send_header('Content-type','application/json')
+                self.end_headers()
+                self.wfile.write('{ "id": "user-johnsmith" }')
+            else:
+                self.send_response(503)
+                self.send_header('Content-type','text/plain')
+                self.end_headers()
+                self.wfile.write('503: Service Unavailable')
+        elif testing_mode == 'mixed':
+            if len(testing_stats['postRequests']) > 5:
+                raise Exception('Too many requests')
+            elif len(testing_stats['postRequests']) == 5:
+                self.send_response(200)
+                self.send_header('Content-type','application/json')
+                self.end_headers()
+                self.wfile.write('{ "id": "user-johnsmith" }')
+            elif len(testing_stats['postRequests']) == 3:
+                self.send_response(500)
+                self.send_header('Content-type','text/plain')
+                self.end_headers()
+                self.wfile.write('500: Internal Server Error')
+            else:
+                self.send_response(503)
+                self.send_header('Content-type','text/plain')
+                self.end_headers()
+                self.wfile.write('503: Service Unavailable')
         else:
-            self.send_response(503)
-            self.send_header('Content-type','text/plain')
+            self.send_response(500)
+            self.send_header('Content-type', 'text/plain')
             self.end_headers()
-            self.wfile.write('503: Service Unavailable')
+            self.wfile.write("Invalid mode: '{}'".format(testing_mode))

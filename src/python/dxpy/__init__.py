@@ -333,9 +333,6 @@ def _calculate_retry_delay(response, num_attempts):
             # such responses anyway.
             delay = DEFAULT_RETRY_AFTER_503_INTERVAL
     else:
-        logger.warn("Generating random number between %d and %d",
-                min(2 ** (num_attempts - 1), DEFAULT_TIMEOUT / 2),
-                min(2 ** num_attempts, DEFAULT_TIMEOUT))
         delay = randint(min(2 ** (num_attempts - 1), DEFAULT_TIMEOUT / 2), min(2 ** num_attempts, DEFAULT_TIMEOUT))
     return max(1, delay)
 
@@ -581,10 +578,10 @@ def DXHTTPRequest(resource, data, method='POST', headers=None, auth=True,
             success = False
             exception_msg = _extract_msg_from_last_exception()
             if isinstance(e, _expected_exceptions):
-                # Total number of allowed tries is the initial try + up to
-                # (max_retries) subsequent retries.
                 if response is not None and response.status == 503:
                     replies_503_amount += 1
+                # Total number of allowed tries is the initial try + up to
+                # (max_retries + replies_503_amount) subsequent retries.
                 total_allowed_tries = max_retries + replies_503_amount
                 ok_to_retry = False
                 is_retryable = always_retry or (method == 'GET') or _is_retryable_exception(e)

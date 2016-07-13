@@ -2426,14 +2426,27 @@ class TestHTTPResponsesMockApi(unittest.TestCase):
         dxpy.set_api_server_info(host=os.environ["DX_APISERVER_HOST"], port=os.environ["DX_APISERVER_PORT"],
                 protocol=os.environ["DX_APISERVER_PROTOCOL"])
 
-    def test_503_exponential_retry(self):
+    def test_503_exponential_retry_continuous(self):
+        requests.get("http://127.0.0.1:8080/set_testing_mode/continuous")
         res = dxpy.DXHTTPRequest("/system/whoami", {}, want_full_response=True, always_retry=True)
         apiServerStats = json.loads(requests.get("http://127.0.0.1:8080/stats").content)
-        for i in range(4, 7):
+        self.assertEqual(5, len(apiServerStats['postRequests']))
+        for i in range(0, 4):
             tried = dateutil.parser.parse(apiServerStats['postRequests'][i]['timestamp'])
             retried = dateutil.parser.parse(apiServerStats['postRequests'][i + 1]['timestamp'])
             interval = (retried - tried).total_seconds()
-            self.assertTrue(((i - 4) ** 2) <= interval)
+            self.assertTrue((i ** 2) <= interval)
+
+    def test_503_exponential_retry_mixed(self):
+        requests.get("http://127.0.0.1:8080/set_testing_mode/mixed")
+        res = dxpy.DXHTTPRequest("/system/whoami", {}, want_full_response=True, always_retry=True)
+        apiServerStats = json.loads(requests.get("http://127.0.0.1:8080/stats").content)
+        self.assertEqual(5, len(apiServerStats['postRequests']))
+        for i in range(0, 4):
+            tried = dateutil.parser.parse(apiServerStats['postRequests'][i]['timestamp'])
+            retried = dateutil.parser.parse(apiServerStats['postRequests'][i + 1]['timestamp'])
+            interval = (retried - tried).total_seconds()
+            self.assertTrue((i ** 2) <= interval)
 
 
 class TestDataobjectFunctions(unittest.TestCase):
