@@ -18,6 +18,7 @@ package com.dnanexus;
 
 import java.io.IOException;
 import java.nio.charset.Charset;
+import java.util.Random;
 
 import org.apache.http.Header;
 import org.apache.http.HttpEntity;
@@ -97,6 +98,12 @@ public class DXHTTPRequest {
 
     private static final int NUM_RETRIES = 6;
 
+    private static final int MAX_RETRY_DELAY_SEC = 60;
+
+    private static final int DEFAULT_RETRY_AFTER_503_INTERVAL_SEC = 60;
+
+    private static final Random randomGenerator = new Random();
+
     private static final DXEnvironment defaultEnv = DXEnvironment.create();
 
     private static final String USER_AGENT = DXUserAgent.getUserAgent();
@@ -161,7 +168,13 @@ public class DXHTTPRequest {
      */
     public JsonNode request(String resource, JsonNode data, RetryStrategy retryStrategy) {
         String dataAsString = data.toString();
-        return requestImpl(resource, dataAsString, true, retryStrategy).responseJson;
+        System.err.println("DXHTTPRequest::request(): Making request to '" + resource + "' resource: " + dataAsString);
+//        return requestImpl(resource, dataAsString, true, retryStrategy).responseJson;
+        DXHTTPRequest.ParsedResponse response = requestImpl(resource, dataAsString, true, retryStrategy);
+        JsonNode responseJson = response.responseJson;
+        System.err.println("DXHTTPRequest::request(): Response is: " + responseJson.toString());
+        System.err.println("--------------------------------------------------------------");
+        return responseJson;
     }
 
     /**
@@ -196,7 +209,15 @@ public class DXHTTPRequest {
      *         response (includes HTTP protocol errors).
      */
     public String request(String resource, String data, RetryStrategy retryStrategy) {
+        System.err.println("Sending data to '" + resource + "' resource: " + data);
         return requestImpl(resource, data, false, retryStrategy).responseText;
+    }
+
+    private int generateRetryInterval(int attempts) {
+        int lowerBound = Math.min((int) Math.pow(2, attempts - 1), MAX_RETRY_DELAY_SEC / 2);
+        int upperBound = Math.min((int) Math.pow(2, attempts), MAX_RETRY_DELAY_SEC);
+        System.out.println("Generating random number between " + lowerBound + " and " + upperBound);
+        return randomGenerator.nextInt(upperBound - lowerBound + 1) + lowerBound;
     }
 
     /**
@@ -229,21 +250,21 @@ public class DXHTTPRequest {
         request.setEntity(new StringEntity(data, Charset.forName("UTF-8")));
 
         // Retry with exponential backoff
-        int timeoutSeconds = 1;
+        int timeoutSeconds = 0;
         int attempts = 0;
+        int totalAllowedTries = NUM_RETRIES;
 
         while (true) {
             Integer statusCode = null;
 
             // This guarantees that we get at least one iteration around this loop before running
             // out of retries, so we can check at the bottom of the loop instead of the top.
-            assert NUM_RETRIES > 0;
+            assert totalAllowedTries > 0;
 
             // By default, our conservative strategy is to retry if the route permits it. Later we
             // may update this to unconditionally retry if we can definitely determine that the
             // server never saw the request.
             boolean retryRequest = (retryStrategy == RetryStrategy.SAFE_TO_RETRY);
-            int retryAfterSeconds = 60;
 
             try {
                 // In this block, any IOException will cause the request to be retried (up to a
@@ -332,42 +353,44 @@ public class DXHTTPRequest {
                     // If retries enabled, 500 InternalError should get retried unconditionally
                     retryRequest = true;
                     if (statusCode == 503) {
-                        Header retryAfterHeader = response.getFirstHeader("retry-after");
+                        // Retries due to 503 Service Unavailable and Retry-After do NOT count against the
+                        // allowed number of retries.
+                        totalAllowedTries++;
                         // Consume the response to avoid leaking resources
                         EntityUtils.consume(entity);
+                        // Fetching/calculating retry interval
+                        Header retryAfterHeader = response.getFirstHeader("retry-after");
                         if (retryAfterHeader != null) {
                             try {
-                                retryAfterSeconds = Integer.parseInt(retryAfterHeader.getValue());
+                                timeoutSeconds = Integer.parseInt(retryAfterHeader.getValue());
                             } catch (NumberFormatException e) {
                                 // Just fall back to the default
+                                timeoutSeconds = DEFAULT_RETRY_AFTER_503_INTERVAL_SEC;
                             }
+                        } else {
+                            timeoutSeconds = generateRetryInterval(attempts + 1);
                         }
-                        throw new ServiceUnavailableException("503 Service Unavailable", statusCode, retryAfterSeconds);
+                        throw new ServiceUnavailableException("503 Service Unavailable", statusCode, timeoutSeconds);
                     }
                     throw new IOException(EntityUtils.toString(entity));
                 }
             } catch (ServiceUnavailableException e) {
-                int secondsToWait = retryAfterSeconds;
-
                 if (this.disableRetry) {
                     System.err.println("POST " + resource + ": 503 Service Unavailable, suggested wait "
-                            + secondsToWait + " seconds");
+                            + Integer.toString(timeoutSeconds) + " seconds");
                     throw e;
                 }
-
-                // Retries due to 503 Service Unavailable and Retry-After do NOT count against the
-                // allowed number of retries.
-                System.err.println("POST " + resource + ": 503 Service Unavailable, waiting for "
-                        + Integer.toString(secondsToWait) + " seconds");
-                sleep(secondsToWait);
-                continue;
+                System.err.println(errorMessage("POST", resource, e.toString(), timeoutSeconds,
+                        attempts + 1, totalAllowedTries));
             } catch (IOException e) {
                 // Note, this catches both exceptions directly thrown from httpclient.execute (e.g.
                 // no connectivity to server) and exceptions thrown by our code above after parsing
                 // the response.
+                //timeoutSeconds = randomGenerator.nextInt(Math.min((int) Math.pow(2, attempts), MAX_RETRY_DELAY_SEC / 2) + 1) + MAX_RETRY_DELAY_SEC / 2;
+                timeoutSeconds = generateRetryInterval(attempts + 1);
                 System.err.println(errorMessage("POST", resource, e.toString(), timeoutSeconds,
-                        attempts + 1, NUM_RETRIES));
-                if (attempts == NUM_RETRIES || !retryRequest) {
+                        attempts + 1, totalAllowedTries));
+                if (attempts >= totalAllowedTries || !retryRequest) {
                     if (statusCode == null) {
                         throw new DXHTTPException();
                     }
@@ -376,7 +399,7 @@ public class DXHTTPRequest {
                 }
             }
 
-            assert attempts < NUM_RETRIES;
+            assert attempts < totalAllowedTries;
             assert retryRequest;
 
             attempts++;
@@ -384,10 +407,9 @@ public class DXHTTPRequest {
             // The number of failed attempts is now no more than NUM_RETRIES, and the total number
             // of attempts allowed is NUM_RETRIES + 1 (the first attempt, plus up to NUM_RETRIES
             // retries). So there is at least one more retry left; sleep before we retry.
-            assert attempts <= NUM_RETRIES;
+            assert attempts <= totalAllowedTries;
 
             sleep(timeoutSeconds);
-            timeoutSeconds *= 2;
         }
     }
 }
