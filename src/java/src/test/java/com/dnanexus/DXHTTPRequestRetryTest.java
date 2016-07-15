@@ -16,7 +16,6 @@
 
 package com.dnanexus;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -41,7 +40,7 @@ import java.util.Iterator;
 /**
  * Tests for DXHTTPRequest against APIserver mock object
  */
-public class DXHTTPRequestMockApiTest {
+public class DXHTTPRequestRetryTest {
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private static class WhoamiRequest {
@@ -59,7 +58,7 @@ public class DXHTTPRequestMockApiTest {
     public void setUp() throws IOException, InterruptedException {
         Path apiMockPath = Paths.get(System.getProperty("user.dir"), "..", "python", "test", "mock_api");
         Path apiMockServer = Paths.get(apiMockPath.toString(), "apiserver_mock.py");
-        Path apiMockServer503Handler = Paths.get(apiMockPath.toString(), "test_503_no_retry-after_exponential_randomized_timout.py");
+        Path apiMockServer503Handler = Paths.get(apiMockPath.toString(), "test_retry.py");
         apiServerMockProcess = Runtime.getRuntime().exec(apiMockServer + " " + apiMockServer503Handler + " " +
                 Integer.toString(API_SERVER_TCP_PORT));
         //System.out.println("APIserver mock process is: " + apiServerMockProcess.toString());
@@ -74,7 +73,7 @@ public class DXHTTPRequestMockApiTest {
         apiServerMockProcess.destroy();
     }
 
-    private void checkExponentialRetry(String testingMode) throws IOException, java.text.ParseException {
+    private void checkExponentialBackoff(String testingMode) throws IOException, java.text.ParseException {
         HttpClient c = HttpClientBuilder.create().setUserAgent(DXUserAgent.getUserAgent()).build();
         HttpResponse response = c.execute(new HttpGet("http://localhost:" + Integer.toString(this.API_SERVER_TCP_PORT) +
                 "/set_testing_mode/" + testingMode));
@@ -107,18 +106,55 @@ public class DXHTTPRequestMockApiTest {
     }
 
     /**
-     * Tests randomized exponential retry delay having 503 w/o 'Retry-After' header
+     * Tests randomized exponential backoff having 500
      */
     @Test
-    public void testServiceUnavailableExponentialRetryContinuous() throws IOException, java.text.ParseException {
-        checkExponentialRetry("continuous");
+    public void testExponentialBackoff500() throws IOException, java.text.ParseException {
+        checkExponentialBackoff("500");
     }
 
     /**
-     * Tests randomized exponential retry delay having 503 w/o 'Retry-After' header, which are mixed with 500
+     * Tests randomized exponential backoff having 500, which fails because max retry amount got hit
      */
     @Test
-    public void testServiceUnavailableExponentialRetryMixed() throws IOException, java.text.ParseException {
-        checkExponentialRetry("mixed");
+    public void testExponentialBackoff500Fail() throws IOException, java.text.ParseException {
+        // TODO
+        //checkExponentialBackoff("500_fail");
+    }
+
+    /**
+     * Tests randomized exponential backoff having 503 w/o 'Retry-After' header
+     */
+    @Test
+    public void testExponentialBackoff503() throws IOException, java.text.ParseException {
+        checkExponentialBackoff("503");
+    }
+
+    /**
+     * Tests randomized exponential backoff having 503 with 'Retry-After' header
+     */
+    @Test
+    public void testExponentialBackoff503RetryAfter() throws IOException, java.text.ParseException {
+        // TODO
+        //checkExponentialBackoff("503_retry_after");
+    }
+
+
+    /**
+     * Tests randomized exponential backoff having 503 with mixed 'Retry-After' header
+     */
+    @Test
+    public void testExponentialBackoff503Mixed() throws IOException, java.text.ParseException {
+        // TODO
+        //checkExponentialBackoff("503_retry_mixed");
+    }
+
+    /**
+     * Tests randomized exponential backoff having 5xx
+     */
+    @Test
+    public void testExponentialBackoffMixed() throws IOException, java.text.ParseException {
+        // TODO: Add 503 w "Retry-After" to the mix
+        checkExponentialBackoff("mixed");
     }
 }
