@@ -104,12 +104,19 @@ public class DXHTTPRequestRetryTest {
             double itemTimestamp =  (double) DatatypeConverter.parseDateTime(statIterator.next().get("timestamp").asText()).getTimeInMillis() / 1000.0;
             if (prevItemTimestamp > 0.0) {
                 double interval = itemTimestamp - prevItemTimestamp;
-                //System.out.println("Limits are: " + Math.pow(2.0, (i - 1.0)) + ", " + (Math.pow(2.0, i) + 0.5));
-                Assert.assertTrue(Math.pow(2.0, (i - 1.0)) <= interval);
-                Assert.assertTrue(interval <= Math.pow(2.0, i) + 0.5);
+                if (testingMode.equals("503_retry_after")) {
+                    Assert.assertTrue(((double) i) <= interval);
+                    Assert.assertTrue(interval <= (((double) i) + 0.5));
+                } else if (testingMode.equals("503_mixed") && i == 3) {
+                    Assert.assertTrue(2.0 <= interval);
+                    Assert.assertTrue(interval <= 2.5);
+                } else {
+                    Assert.assertTrue(Math.pow(2.0, (i - 1.0)) <= interval);
+                    Assert.assertTrue(interval <= Math.pow(2.0, i) + 0.5);
+                }
             }
-            prevItemTimestamp = itemTimestamp;
             i++;
+            prevItemTimestamp = itemTimestamp;
         }
 
         if (testingMode.equals("500_fail")) {
@@ -150,18 +157,15 @@ public class DXHTTPRequestRetryTest {
      */
     @Test
     public void test503RetryAfter() throws IOException, java.text.ParseException {
-        // TODO
-        //checkRetry("503_retry_after");
+        checkRetry("503_retry_after");
     }
-
 
     /**
      * Tests randomized exponential backoff having 503 with mixed 'Retry-After' header
      */
     @Test
     public void test503Mixed() throws IOException, java.text.ParseException {
-        // TODO
-        //checkRetry("503_retry_mixed");
+        checkRetry("503_mixed");
     }
 
     /**
