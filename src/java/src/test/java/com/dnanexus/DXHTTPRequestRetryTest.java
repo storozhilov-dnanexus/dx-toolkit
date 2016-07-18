@@ -25,10 +25,7 @@ import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.HttpClientBuilder;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 import javax.xml.bind.DatatypeConverter;
 import java.io.BufferedReader;
@@ -110,6 +107,14 @@ public class DXHTTPRequestRetryTest {
                 } else if ((testingMode.equals("503_mixed") && i == 3) || (testingMode.equals("mixed") && i == 4)) {
                     Assert.assertTrue(2.0 <= interval);
                     Assert.assertTrue(interval <= 2.5);
+                } else if (testingMode.equals("503_mixed_limited")) {
+                    if (i < 11) {
+                        Assert.assertTrue(1.0 <= interval);
+                        Assert.assertTrue(interval <= 1.5);
+                    } else {
+                        Assert.assertTrue(300.0 <= interval);
+                        Assert.assertTrue(interval <= 600.5);
+                    }
                 } else {
                     Assert.assertTrue(Math.pow(2.0, (i - 1.0)) <= interval);
                     Assert.assertTrue(interval <= Math.pow(2.0, i) + 0.5);
@@ -123,6 +128,8 @@ public class DXHTTPRequestRetryTest {
             Assert.assertNotEquals(null, requestException);
             Assert.assertTrue(requestException.toString().equals("DXAPIException: Maximum number of retries reached, or unsafe to retry"));
             Assert.assertEquals(7, i);
+        } else if (testingMode.equals("503_mixed_limited")) {
+            Assert.assertEquals(12, i);
         } else {
             Assert.assertEquals(5, i);
         }
@@ -169,10 +176,20 @@ public class DXHTTPRequestRetryTest {
     }
 
     /**
+     * Tests randomized exponential backoff having 503 with mixed 'Retry-After' header
+     * is limited to 600 seconds
+     */
+    @Ignore("Could run too long, up to 10 minutes") @Test
+    public void test503MixedLimited() throws IOException, java.text.ParseException {
+        checkRetry("503_mixed_limited");
+    }
+
+    /**
      * Tests randomized exponential backoff having 5xx
      */
     @Test
     public void testMixed() throws IOException, java.text.ParseException {
         checkRetry("mixed");
     }
+
 }

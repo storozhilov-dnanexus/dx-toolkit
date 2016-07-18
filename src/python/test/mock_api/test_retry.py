@@ -39,7 +39,7 @@ class MockHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(testing_stats))
             return
         new_mode = m.groups()[0]
-        if new_mode not in ['500', '500_fail', '503', '503_retry_after', '503_mixed', 'mixed']:
+        if new_mode not in ['500', '500_fail', '503', '503_retry_after', '503_mixed', '503_mixed_limited', 'mixed']:
             self.send_response(500)
             self.send_header('Content-type', 'text/plain')
             self.end_headers()
@@ -123,6 +123,21 @@ class MockHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-type', 'text/plain')
                 if len(testing_stats['postRequests']) == 3:
                     self.send_header('Retry-After', '2')
+                self.end_headers()
+                self.wfile.write('503: Service Unavailable')
+        elif testing_mode == '503_mixed_limited':
+            if len(testing_stats['postRequests']) > 12:
+                raise Exception('Too many requests')
+            elif len(testing_stats['postRequests']) == 12:
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write('{ "id": "user-johnsmith" }')
+            else:
+                self.send_response(503)
+                self.send_header('Content-type', 'text/plain')
+                if len(testing_stats['postRequests']) < 11:
+                    self.send_header('Retry-After', '1')
                 self.end_headers()
                 self.wfile.write('503: Service Unavailable')
         elif testing_mode == 'mixed':
