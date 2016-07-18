@@ -141,6 +141,8 @@ class MockHandler(BaseHTTPRequestHandler):
             else:
                 self.send_response(503)
                 self.send_header('Content-type', 'text/plain')
+                if len(testing_stats['postRequests']) == 4:
+                    self.send_header('Retry-After', '2')
                 self.end_headers()
                 self.wfile.write('503: Service Unavailable')
         else:

@@ -107,7 +107,7 @@ public class DXHTTPRequestRetryTest {
                 if (testingMode.equals("503_retry_after")) {
                     Assert.assertTrue(((double) i) <= interval);
                     Assert.assertTrue(interval <= (((double) i) + 0.5));
-                } else if (testingMode.equals("503_mixed") && i == 3) {
+                } else if ((testingMode.equals("503_mixed") && i == 3) || (testingMode.equals("mixed") && i == 4)) {
                     Assert.assertTrue(2.0 <= interval);
                     Assert.assertTrue(interval <= 2.5);
                 } else {
@@ -173,7 +173,6 @@ public class DXHTTPRequestRetryTest {
      */
     @Test
     public void testMixed() throws IOException, java.text.ParseException {
-        // TODO: Add 503 w "Retry-After" to the mix
         checkRetry("mixed");
     }
 }

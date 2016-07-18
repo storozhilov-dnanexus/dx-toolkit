@@ -386,7 +386,7 @@ public class DXHTTPRequest {
                 // Note, this catches both exceptions directly thrown from httpclient.execute (e.g.
                 // no connectivity to server) and exceptions thrown by our code above after parsing
                 // the response.
-                //timeoutSeconds = randomGenerator.nextInt(Math.min((int) Math.pow(2, attempts), MAX_RETRY_INTERVAL_SEC / 2) + 1) + MAX_RETRY_INTERVAL_SEC / 2;
+                timeoutSeconds = generateRetryInterval(attempts + 1);
                 System.err.println(errorMessage("POST", resource, e.toString(), timeoutSeconds,
                         attempts + 1, totalAllowedTries));
                 if (attempts >= totalAllowedTries || !retryRequest) {
