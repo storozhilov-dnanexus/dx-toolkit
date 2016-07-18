@@ -16,6 +16,7 @@
 
 package com.dnanexus;
 
+import com.dnanexus.exceptions.InternalErrorException;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -73,14 +74,19 @@ public class DXHTTPRequestRetryTest {
         apiServerMockProcess.destroy();
     }
 
-    private void checkExponentialBackoff(String testingMode) throws IOException, java.text.ParseException {
+    private void checkRetry(String testingMode) throws IOException, java.text.ParseException {
         HttpClient c = HttpClientBuilder.create().setUserAgent(DXUserAgent.getUserAgent()).build();
         HttpResponse response = c.execute(new HttpGet("http://localhost:" + Integer.toString(this.API_SERVER_TCP_PORT) +
                 "/set_testing_mode/" + testingMode));
+
         final DXHTTPRequest req = new DXHTTPRequest(env);
-        //WhoamiResponse response = DXJSON.safeTreeToValue(req.request("/system/whoami",
-        //        mapper.valueToTree(new WhoamiRequest()), DXHTTPRequest.RetryStrategy.SAFE_TO_RETRY), WhoamiResponse.class);
-        req.request("/system/whoami", mapper.valueToTree(new WhoamiRequest()), DXHTTPRequest.RetryStrategy.SAFE_TO_RETRY);
+        InternalErrorException requestException = null;
+        try {
+            req.request("/system/whoami", mapper.valueToTree(new WhoamiRequest()), DXHTTPRequest.RetryStrategy.SAFE_TO_RETRY);
+        } catch (InternalErrorException e) {
+            requestException = e;
+        }
+
         HttpResponse statResponse = c.execute(new HttpGet("http://localhost:" + Integer.toString(this.API_SERVER_TCP_PORT) +
                 "/stats"));
         BufferedReader rd = new BufferedReader(new InputStreamReader(statResponse.getEntity().getContent()));
@@ -93,7 +99,8 @@ public class DXHTTPRequestRetryTest {
         //System.out.println("POST request stat is: " + statJson.get("postRequests").toString() + ", node type is: " + statJson.get("postRequests").getNodeType().toString());
         Iterator<JsonNode> statIterator = statJson.get("postRequests").iterator();
         double prevItemTimestamp = 0.0;
-        for (int i = 0; statIterator.hasNext(); i++) {
+        int i = 0;
+        while (statIterator.hasNext()) {
             double itemTimestamp =  (double) DatatypeConverter.parseDateTime(statIterator.next().get("timestamp").asText()).getTimeInMillis() / 1000.0;
             if (prevItemTimestamp > 0.0) {
                 double interval = itemTimestamp - prevItemTimestamp;
@@ -102,6 +109,15 @@ public class DXHTTPRequestRetryTest {
                 Assert.assertTrue(interval <= Math.pow(2.0, i) + 0.5);
             }
             prevItemTimestamp = itemTimestamp;
+            i++;
+        }
+
+        if (testingMode.equals("500_fail")) {
+            Assert.assertNotEquals(null, requestException);
+            Assert.assertTrue(requestException.toString().equals("DXAPIException: Maximum number of retries reached, or unsafe to retry"));
+            Assert.assertEquals(7, i);
+        } else {
+            Assert.assertEquals(5, i);
         }
     }
 
@@ -109,34 +125,33 @@ public class DXHTTPRequestRetryTest {
      * Tests randomized exponential backoff having 500
      */
     @Test
-    public void testExponentialBackoff500() throws IOException, java.text.ParseException {
-        checkExponentialBackoff("500");
+    public void test500() throws IOException, java.text.ParseException {
+        checkRetry("500");
     }
 
     /**
      * Tests randomized exponential backoff having 500, which fails because max retry amount got hit
      */
     @Test
-    public void testExponentialBackoff500Fail() throws IOException, java.text.ParseException {
-        // TODO
-        //checkExponentialBackoff("500_fail");
+    public void test500Fail() throws IOException, java.text.ParseException {
+        checkRetry("500_fail");
     }
 
     /**
      * Tests randomized exponential backoff having 503 w/o 'Retry-After' header
      */
     @Test
-    public void testExponentialBackoff503() throws IOException, java.text.ParseException {
-        checkExponentialBackoff("503");
+    public void test503() throws IOException, java.text.ParseException {
+        checkRetry("503");
     }
 
     /**
      * Tests randomized exponential backoff having 503 with 'Retry-After' header
      */
     @Test
-    public void testExponentialBackoff503RetryAfter() throws IOException, java.text.ParseException {
+    public void test503RetryAfter() throws IOException, java.text.ParseException {
         // TODO
-        //checkExponentialBackoff("503_retry_after");
+        //checkRetry("503_retry_after");
     }
 
 
@@ -144,17 +159,17 @@ public class DXHTTPRequestRetryTest {
      * Tests randomized exponential backoff having 503 with mixed 'Retry-After' header
      */
     @Test
-    public void testExponentialBackoff503Mixed() throws IOException, java.text.ParseException {
+    public void test503Mixed() throws IOException, java.text.ParseException {
         // TODO
-        //checkExponentialBackoff("503_retry_mixed");
+        //checkRetry("503_retry_mixed");
     }
 
     /**
      * Tests randomized exponential backoff having 5xx
      */
     @Test
-    public void testExponentialBackoffMixed() throws IOException, java.text.ParseException {
+    public void testMixed() throws IOException, java.text.ParseException {
         // TODO: Add 503 w "Retry-After" to the mix
-        checkExponentialBackoff("mixed");
+        checkRetry("mixed");
     }
 }

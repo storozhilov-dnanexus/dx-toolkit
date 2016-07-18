@@ -98,7 +98,7 @@ public class DXHTTPRequest {
 
     private static final int NUM_RETRIES = 6;
 
-    private static final int MAX_RETRY_DELAY_SEC = 60;
+    private static final int MAX_RETRY_INTERVAL_SEC = 600;
 
     private static final int DEFAULT_RETRY_AFTER_503_INTERVAL_SEC = 60;
 
@@ -214,8 +214,8 @@ public class DXHTTPRequest {
     }
 
     private int generateRetryInterval(int attempts) {
-        int lowerBound = Math.min((int) Math.pow(2, attempts - 1), MAX_RETRY_DELAY_SEC / 2);
-        int upperBound = Math.min((int) Math.pow(2, attempts), MAX_RETRY_DELAY_SEC);
+        int lowerBound = Math.min((int) Math.pow(2, attempts - 1), MAX_RETRY_INTERVAL_SEC / 2);
+        int upperBound = Math.min((int) Math.pow(2, attempts), MAX_RETRY_INTERVAL_SEC);
         System.out.println("Generating random number between " + lowerBound + " and " + upperBound);
         return randomGenerator.nextInt(upperBound - lowerBound + 1) + lowerBound;
     }
@@ -386,8 +386,7 @@ public class DXHTTPRequest {
                 // Note, this catches both exceptions directly thrown from httpclient.execute (e.g.
                 // no connectivity to server) and exceptions thrown by our code above after parsing
                 // the response.
-                //timeoutSeconds = randomGenerator.nextInt(Math.min((int) Math.pow(2, attempts), MAX_RETRY_DELAY_SEC / 2) + 1) + MAX_RETRY_DELAY_SEC / 2;
-                timeoutSeconds = generateRetryInterval(attempts + 1);
+                //timeoutSeconds = randomGenerator.nextInt(Math.min((int) Math.pow(2, attempts), MAX_RETRY_INTERVAL_SEC / 2) + 1) + MAX_RETRY_INTERVAL_SEC / 2;
                 System.err.println(errorMessage("POST", resource, e.toString(), timeoutSeconds,
                         attempts + 1, totalAllowedTries));
                 if (attempts >= totalAllowedTries || !retryRequest) {

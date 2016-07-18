@@ -75,6 +75,14 @@ class MockHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-type','text/plain')
                 self.end_headers()
                 self.wfile.write('500: Internal Server Error')
+        elif testing_mode == '500_fail':
+            if len(testing_stats['postRequests']) > 7:
+                raise Exception('Too many requests')
+            else:
+                self.send_response(500)
+                self.send_header('Content-type','text/plain')
+                self.end_headers()
+                self.wfile.write('500: Internal Server Error')
         elif testing_mode == '503':
             if len(testing_stats['postRequests']) > 5:
                 raise Exception('Too many requests')
