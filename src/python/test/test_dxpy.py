@@ -31,8 +31,8 @@ from requests.packages.urllib3.exceptions import SSLError
 
 import dxpy
 import dxpy_testutil as testutil
-from dxpy.exceptions import (DXAPIError, DXFileError, DXError, DXJobFailureError, ResourceNotFound)
-from dxpy.utils import pretty_print, warn
+from dxpy.exceptions import (DXAPIError, HTTPError, DXFileError, DXError, DXJobFailureError, ResourceNotFound)
+from dxpy.utils import pretty_print, warn, Nonce
 from dxpy.utils.resolver import resolve_path, resolve_existing_path, ResolutionError, is_project_explicit
 
 def get_objects_from_listf(listf):
@@ -268,7 +268,6 @@ class TestDXProject(unittest.TestCase):
         with self.assertRaises(DXAPIError):
             dxrecord.describe()
 
-
 class TestDXFileFunctions(unittest.TestCase):
     def test_readable_part_size(self):
         self.assertEqual(dxpy.dxfile._readable_part_size(0), "0 bytes")
@@ -314,17 +313,17 @@ class TestDXFileFunctions(unittest.TestCase):
             dxpy.dxfile._get_write_buf_size(16 * MB, azure, 200001 * MB)
 
     def test_job_detection(self):
-        if platform.system()=='Windows':
+        if platform.system() == 'Windows':
             import nt
             env = dict(nt.environ, DX_JOB_ID=b'job-00000000000000000000')
         else:
             env = dict(os.environ, DX_JOB_ID=b'job-00000000000000000000')
         buffer_size = subprocess.check_output(
-            "python -c 'import dxpy; print dxpy.bindings.dxfile.DEFAULT_BUFFER_SIZE'", shell=True, env=env)
+            'python -c "import dxpy; print dxpy.bindings.dxfile.DEFAULT_BUFFER_SIZE"', shell=True, env=env)
         self.assertEqual(int(buffer_size), 96 * 1024 * 1024)
         del env['DX_JOB_ID']
         buffer_size = subprocess.check_output(
-            "python -c 'import dxpy; print dxpy.bindings.dxfile.DEFAULT_BUFFER_SIZE'", shell=True, env=env)
+            'python -c "import dxpy; print dxpy.bindings.dxfile.DEFAULT_BUFFER_SIZE"', shell=True, env=env)
         self.assertEqual(int(buffer_size), 16 * 1024 * 1024)
 
     def test_generate_read_requests(self):
@@ -639,9 +638,9 @@ class TestDXFile(unittest.TestCase):
         url2 = dxfile.get_download_url(**opts)
         self.assertEqual(url1, url2)
         # Cache is invalidated when the client knows the token has expired
-        # (subject to clock skew allowance of 60s)
+        # (subject to clock skew allowance of 30s)
         dxfile = dxpy.open_dxfile(dxfile.get_id())
-        url3 = dxfile.get_download_url(duration=60, **opts)
+        url3 = dxfile.get_download_url(duration=30, **opts)
         url4 = dxfile.get_download_url(**opts)
         self.assertNotEqual(url3, url4)
 
@@ -719,6 +718,113 @@ class TestDXFile(unittest.TestCase):
             dxpy.WORKSPACE_ID = workspace_id
 
         del os.environ['DX_JOB_ID']
+
+
+class TestFolder(unittest.TestCase):
+
+    def setUp(self):
+        setUpTempProjects(self)
+        self.temp_dir = tempfile.mkdtemp(prefix="test.dx-toolkit.dxpy.TestFolder.")
+        self.temp_file_fd, self.temp_file_path = tempfile.mkstemp(prefix="test.dx-toolkit.dxpy.TestFile.")
+        with os.fdopen(self.temp_file_fd, 'w') as temp_file:
+            temp_file.write('42')
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+        os.remove(self.temp_file_path)
+        tearDownTempProjects(self)
+
+    def test_download_folder(self):
+        dxproject = dxpy.DXProject(self.proj_id)
+
+        # Creating remote folders
+        dxproject.new_folder("/a/b/c/d", parents=True)
+        dxproject.new_folder("/a/e/f/g", parents=True)
+        dxproject.new_folder("/h/i/j/k", parents=True)
+
+        # Filling remote folders with objects
+        for i, folder in enumerate(["/", "/a", "/a/b", "/a/b/c", "/a/b/c/d"]):
+            dxpy.upload_string("{}-th\n file\n content\n".format(i + 1), wait_on_close=True,
+                    name="file_{}.txt".format(i + 1), folder=folder)
+            dxrecord = dxpy.new_dxrecord(name="record_{}".format(i + 1), folder=folder)
+
+        # Checking root directory download
+        root_dest_dir = os.path.join(self.temp_dir, "root")
+        dxpy.download_folder(self.proj_id, root_dest_dir)
+        path = []
+        for i, f in enumerate([root_dest_dir, "a", "b", "c", "d"]):
+            path.append(f)
+            filename = os.path.join(os.path.join(*path), "file_{}.txt".format(i + 1))
+            self.assertTrue(os.path.isfile(filename))
+            self.assertEquals("{}-th\n file\n content\n".format(i + 1), open(filename, "r").read())
+        self.assertTrue(os.path.isdir(os.path.join(root_dest_dir, "a", "e", "f", "g")))
+        self.assertTrue(os.path.isdir(os.path.join(root_dest_dir, "h", "i", "j", "k")))
+
+        # Checking non-root directory download
+        a_dest_dir = os.path.join(self.temp_dir, "a")
+        dxpy.download_folder(self.proj_id, a_dest_dir, folder="/a/")
+        path = []
+        for i, f in enumerate([a_dest_dir, "b", "c", "d"]):
+            path.append(f)
+            filename = os.path.join(os.path.join(*path), "file_{}.txt".format(i + 2))
+            self.assertTrue(os.path.isfile(filename))
+            self.assertEquals("{}-th\n file\n content\n".format(i + 2), open(filename, "r").read())
+
+        # Checking 2-nd level subdirectory download
+        ag = os.path.join(self.temp_dir, "b")
+        dxpy.download_folder(self.proj_id, ag, folder="/a/b/")
+        path = []
+        for i, f in enumerate([ag, "c", "d"]):
+            path.append(f)
+            filename = os.path.join(os.path.join(*path), "file_{}.txt".format(i + 3))
+            self.assertTrue(os.path.isfile(filename))
+            self.assertEquals("{}-th\n file\n content\n".format(i + 3), open(filename, "r").read())
+
+        # Checking download to existing structure
+        dxpy.download_folder(self.proj_id, a_dest_dir, folder="/a", overwrite=True)
+        path = []
+        for i, f in enumerate([a_dest_dir, "b", "c", "d"]):
+            path.append(f)
+            filename = os.path.join(os.path.join(*path), "file_{}.txt".format(i + 2))
+            self.assertTrue(os.path.isfile(filename))
+            self.assertEquals("{}-th\n file\n content\n".format(i + 2), open(filename, "r").read())
+
+        # Checking download to existing structure fails w/o overwrite flag
+        with self.assertRaises(DXFileError):
+            dxpy.download_folder(self.proj_id, a_dest_dir, folder="/a")
+
+        # Checking download to existing file fails
+        with self.assertRaises(DXFileError):
+            dxpy.download_folder(self.proj_id, self.temp_file_path)
+
+        # Checking download to file instead of subdir fails
+        a1_dest_dir = os.path.join(self.temp_dir, "a1")
+        os.mkdir(a1_dest_dir)
+        with open(os.path.join(a1_dest_dir, "b"), "w") as f:
+            f.write("42")
+        with self.assertRaises(DXFileError):
+            dxpy.download_folder(self.proj_id, a1_dest_dir, folder="/a")
+
+        # Checking download to non-writable location fails
+        if sys.platform != "win32":
+            with self.assertRaises(OSError):
+                dxpy.download_folder(self.proj_id, "/usr/bin/a", folder="/a")
+
+        # Checking download to empty location fails
+        with self.assertRaises(DXFileError):
+            dxpy.download_folder(self.proj_id, " ", folder="/a")
+
+        # Checking download from empty location fails
+        with self.assertRaises(DXFileError):
+            dxpy.download_folder(self.proj_id, os.path.join(self.temp_dir, "foobar"), folder="\t")
+
+        # Checking download from non-existent location fails
+        with self.assertRaises(DXFileError):
+            dxpy.download_folder(self.proj_id, os.path.join(self.temp_dir, "foobar"), folder="/non_existent")
+
+        # Checking download from invalid location fails
+        with self.assertRaises(DXFileError):
+            dxpy.download_folder(self.proj_id, os.path.join(self.temp_dir, "foobar"), folder="a/b")
 
 
 @unittest.skipUnless(testutil.TEST_GTABLE, 'skipping test that would create a GTable')
@@ -1445,7 +1551,6 @@ def main():
 
 class TestDXWorkflow(unittest.TestCase):
     default_inst_type = "mem2_hdd2_x2"
-
     def setUp(self):
         setUpTempProjects(self)
 
@@ -2335,7 +2440,7 @@ class TestHTTPResponses(unittest.TestCase):
         end_time = int(time.time() * 1000)
         time_elapsed = end_time - start_time
         self.assertTrue(20000 <= time_elapsed)
-        self.assertTrue(time_elapsed <= 30000)
+        self.assertTrue(time_elapsed <= (20000 + 10000))
 
     def test_retry_after_without_header_set(self):
         start_time = int(time.time() * 1000)
@@ -2344,7 +2449,7 @@ class TestHTTPResponses(unittest.TestCase):
         end_time = int(time.time() * 1000)
         time_elapsed = end_time - start_time
         self.assertTrue(20000 <= time_elapsed)
-        self.assertTrue(time_elapsed <= 30000)
+        self.assertTrue(time_elapsed <= (2000 + 4000 + 8000 + 16000 + 10000))
 
     def test_generic_exception_not_retryable(self):
         self.assertFalse(dxpy._is_retryable_exception(KeyError('oops')))
@@ -2403,7 +2508,7 @@ class TestHTTPResponses(unittest.TestCase):
         self.assertGreater(end_time - start_time, min_sec_with_retries)
 
 
-class TestHTTPResponsesMockApi(unittest.TestCase):
+class TestHTTPRetry(unittest.TestCase):
     apiServerMockSubprocess = None
 
     def setUp(self):
@@ -2415,8 +2520,8 @@ class TestHTTPResponsesMockApi(unittest.TestCase):
         apiServerMockFilename = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                 "mock_api", "apiserver_mock.py")
         apiServerMockHandlerFilename = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                "mock_api", "test_503_no_retry-after_exponential_randomized_timout.py")
-        self.apiServerMockSubprocess = subprocess.Popen([apiServerMockFilename, apiServerMockHandlerFilename, str(apiServerTcpPort)])
+                "mock_api", "test_retry.py")
+        self.apiServerMockSubprocess = subprocess.Popen([sys.executable, apiServerMockFilename, apiServerMockHandlerFilename, str(apiServerTcpPort)])
         time.sleep(0.2)
 
     def tearDown(self):
@@ -2426,29 +2531,74 @@ class TestHTTPResponsesMockApi(unittest.TestCase):
         dxpy.set_api_server_info(host=os.environ["DX_APISERVER_HOST"], port=os.environ["DX_APISERVER_PORT"],
                 protocol=os.environ["DX_APISERVER_PROTOCOL"])
 
-    def test_503_exponential_retry_continuous(self):
-        requests.get("http://127.0.0.1:8080/set_testing_mode/continuous")
-        res = dxpy.DXHTTPRequest("/system/whoami", {}, want_full_response=True)
+    def checkRetry(self, testingMode):
+        requests.get("http://127.0.0.1:8080/set_testing_mode/{}".format(testingMode))
+        exceptionRaised = False
+        try:
+            res = dxpy.DXHTTPRequest("/system/whoami", {}, want_full_response=True)
+        except HTTPError as e:
+            exceptionRaised = True
         apiServerStats = json.loads(requests.get("http://127.0.0.1:8080/stats").content)
-        self.assertEqual(5, len(apiServerStats['postRequests']))
-        for i in range(0, 4):
-            tried = dateutil.parser.parse(apiServerStats['postRequests'][i]['timestamp'])
-            retried = dateutil.parser.parse(apiServerStats['postRequests'][i + 1]['timestamp'])
-            interval = (retried - tried).total_seconds()
-            self.assertTrue((2 ** i) <= interval)
-            self.assertTrue(interval <= (2 ** (i + 1) + 0.5))
 
-    def test_503_exponential_retry_mixed(self):
-        requests.get("http://127.0.0.1:8080/set_testing_mode/mixed")
-        res = dxpy.DXHTTPRequest("/system/whoami", {}, want_full_response=True)
-        apiServerStats = json.loads(requests.get("http://127.0.0.1:8080/stats").content)
-        self.assertEqual(5, len(apiServerStats['postRequests']))
-        for i in range(0, 4):
-            tried = dateutil.parser.parse(apiServerStats['postRequests'][i]['timestamp'])
-            retried = dateutil.parser.parse(apiServerStats['postRequests'][i + 1]['timestamp'])
+        for i in range(1, len(apiServerStats['postRequests'])):
+            tried = dateutil.parser.parse(apiServerStats['postRequests'][i - 1]['timestamp'])
+            retried = dateutil.parser.parse(apiServerStats['postRequests'][i]['timestamp'])
             interval = (retried - tried).total_seconds()
-            self.assertTrue((2 ** i) <= interval)
-            self.assertTrue(interval <= (2 ** (i + 1) + 0.5))
+            if testingMode == "503_retry_after":
+                self.assertTrue(i <= interval);
+                self.assertTrue(interval <= (i + 0.5));
+            elif (testingMode == "503_mixed" and i == 3) or (testingMode == "mixed" and i == 4):
+                self.assertTrue(2.0 <= interval)
+                self.assertTrue(interval <= 2.5)
+            elif testingMode == "503_mixed_limited":
+                if i < 11:
+                    self.assertTrue(1.0 <= interval);
+                    self.assertTrue(interval <= 1.5);
+                else:
+                    self.assertTrue(300.0 <= interval);
+                    self.assertTrue(interval <= 600.5);
+            else:
+                self.assertTrue((2 ** (i - 1)) <= interval)
+                self.assertTrue(interval <= (2 ** i + 0.5))
+
+        if testingMode == "500_fail":
+            self.assertTrue(exceptionRaised)
+            self.assertEqual(7, len(apiServerStats['postRequests']))
+        elif testingMode == "503_mixed_limited":
+            self.assertEquals(12, len(apiServerStats['postRequests']));
+        else:
+            self.assertFalse(exceptionRaised)
+            self.assertEqual(5, len(apiServerStats['postRequests']))
+
+    def test_500(self):
+        self.checkRetry("500")
+        return
+
+    @unittest.skipUnless('DXTEST_FULL' in os.environ, 'Skipping test that requires too much time to pass (up to 2 minutes)')
+    def test_500_fail(self):
+        self.checkRetry("500_fail")
+        return
+
+    def test_503(self):
+        self.checkRetry("503")
+        return
+
+    def test_503_retry_after(self):
+        self.checkRetry("503_retry_after")
+        return
+
+    def test_503_mixed(self):
+        self.checkRetry("503_mixed")
+        return
+
+    @unittest.skipUnless('DXTEST_FULL' in os.environ, 'Skipping test that requires too much time to pass (up to 10 minutes)')
+    def test_503_mixed_limited(self):
+        self.checkRetry("503_mixed_limited")
+        return
+
+    def test_mixed(self):
+        self.checkRetry("mixed")
+        return
 
 
 class TestDataobjectFunctions(unittest.TestCase):
@@ -2535,7 +2685,6 @@ class TestDataobjectFunctions(unittest.TestCase):
         self.assertIsNone(handler._dxid)
         self.assertEqual(handler._name, "swiss-army-knife")
         self.assertEqual(handler._alias, "1.0.0")
-
 
 class TestResolver(testutil.DXTestCase):
     def setUp(self):
@@ -2792,6 +2941,195 @@ class TestResolver(testutil.DXTestCase):
         # Every job exists in a single project so we'll treat JBORs as being
         # identified with a single project, too
         self.assertTrue(is_project_explicit("job-012301230123012301230123:ofield"))
+
+
+class TestIdempotentRequests(unittest.TestCase):
+    def setUp(self):
+        setUpTempProjects(self)
+
+    def tearDown(self):
+        tearDownTempProjects(self)
+
+    code = '''@dxpy.entry_point('main')\ndef main():\n    pass'''
+    run_spec = {"code": code, "interpreter": "python2.7"}
+
+    # Create an applet using DXApplet.new
+    def create_applet(self, name="app_name"):
+        dxapplet = dxpy.DXApplet()
+        dxapplet.new(name=name,
+                     dxapi="1.04",
+                     runSpec=self.run_spec,
+                     inputSpec=[{"name": "number", "class": "int"}],
+                     outputSpec=[{"name": "number", "class": "int"}])
+        return dxapplet
+
+    def do_retry_http_request(self, api_method, args=None, kwargs={}):
+        if args is None:
+            result = api_method(_test_retry_http_request=True, **kwargs)
+        else:
+            result = api_method(*args, _test_retry_http_request=True, **kwargs)
+        return [result, dxpy._get_retry_response()]
+
+    def get_a_nonce(self):
+        return str(Nonce())
+
+    def test_idempotent_record_creation(self):
+        input_params = {"project": self.proj_id, "name": "Unique Record"}
+
+        records = self.do_retry_http_request(dxpy.api.record_new, kwargs={"input_params": input_params})
+        self.assertItemsEqual(records[0], records[1])
+
+        dxrecord = dxpy.api.record_new(input_params=input_params)
+        self.assertNotIn(dxrecord, records)
+        records.append(dxrecord)
+
+        # A request with the same nonce, but different input, should fail
+        input_params.update({"nonce": self.get_a_nonce()})
+        dxrecord = dxpy.api.record_new(input_params=input_params)
+        self.assertNotIn(dxrecord, records)
+        with self.assertRaises(DXAPIError):
+            input_params.update({"name": "Diff Name"})
+            dxpy.api.record_new(input_params=input_params)
+
+    @unittest.skipUnless(testutil.TEST_ISOLATED_ENV, 'skipping test that would create an app')
+    def test_idempotent_applet_and_app_creation(self):
+        input_params = {"project": self.proj_id,
+                        "name": "new_applet",
+                        "dxapi": "1.04",
+                        "runSpec": self.run_spec
+                        }
+
+        applets = self.do_retry_http_request(dxpy.api.applet_new, kwargs={"input_params": input_params})
+        self.assertItemsEqual(applets[0], applets[1])
+
+        applet = dxpy.api.applet_new(input_params)
+        self.assertNotIn(applet, applets)
+        applets.append(applet)
+
+        input_params.update({"nonce": self.get_a_nonce()})
+        applet = dxpy.api.applet_new(input_params)
+        self.assertNotIn(applet, applets)
+
+        with self.assertRaises(DXAPIError):
+            input_params.update({"name": "different_name"})
+            dxpy.api.applet_new(input_params)
+
+        userid = dxpy.whoami()
+        dxapplet = self.create_applet("test_applet")
+        input_params = {"applet": dxapplet.get_id(), "version": "0.0.1", "bill_to": userid, "name": "new_app_name"}
+        apps = self.do_retry_http_request(dxpy.api.app_new, kwargs={"input_params": input_params})
+        self.assertItemsEqual(apps[0]['id'], apps[1]['id'])
+
+        # A request with the same nonce, but different input, should fail
+        input_params = {"applet": dxapplet.get_id(),
+                        "version": "0.0.1",
+                        "bill_to": userid,
+                        "name": "new_app_name_2",
+                        "nonce": self.get_a_nonce()}
+        app = dxpy.api.app_new(input_params)
+        self.assertNotIn(app, apps)
+
+        with self.assertRaises(DXAPIError):
+            # This is throwing 500 error
+            input_params.update({"name": "another_name"})
+            dxpy.api.app_new(input_params)
+
+    def test_idempotent_file_creation(self):
+        input_params = {"project": self.proj_id, "name": "myFile.txt"}
+        files = self.do_retry_http_request(dxpy.api.file_new, kwargs={"input_params": input_params})
+        self.assertItemsEqual(files[0], files[1])
+
+        dxfile = dxpy.api.file_new(input_params=input_params)
+        self.assertNotIn(dxfile, files)
+        files.append(dxfile)
+
+        # A request with the same nonce, but different input, should fail
+        input_params.update({"nonce": self.get_a_nonce()})
+        dxfile = dxpy.api.file_new(input_params=input_params)
+        self.assertNotIn(dxfile, files)
+        with self.assertRaises(DXAPIError):
+            input_params.update({"name": "differentFileName.txt"})
+            dxpy.api.file_new(input_params)
+
+    def test_idempotent_workflow_creation(self):
+        input_params = {"project": self.proj_id, "name": "The workflow"}
+        workflows = self.do_retry_http_request(dxpy.api.workflow_new, kwargs={"input_params": input_params})
+        self.assertItemsEqual(workflows[0], workflows[1])
+
+        dxworkflow = dxpy.api.workflow_new(input_params)
+        self.assertNotIn(dxworkflow, workflows)
+        workflows.append(dxworkflow)
+
+        # A request with the same nonce, but different input, should fail
+        input_params.update({"nonce": self.get_a_nonce()})
+        dxworkflow = dxpy.api.workflow_new(input_params)
+        self.assertNotIn(dxworkflow, workflows)
+        with self.assertRaises(DXAPIError):
+            input_params.update({"name": "Another workflow"})
+            dxpy.api.workflow_new(input_params)
+
+    @unittest.skipUnless(testutil.TEST_ISOLATED_ENV, 'skipping test that would create an app')
+    def test_idempotent_runs(self):
+        # Create an applet and run it.
+        applet = self.create_applet()
+
+        input_params = {"input": {"number": 32}, "project": self.proj_id}
+        jobs = self.do_retry_http_request(dxpy.api.applet_run,
+                                          args=[applet.get_id()],
+                                          kwargs={"input_params": input_params})
+        self.assertItemsEqual(jobs[0], jobs[1])
+
+        job = dxpy.api.applet_run(applet.get_id(), input_params=input_params)
+        self.assertNotIn(job, jobs)
+        jobs.append(job)
+
+        input_params.update({"nonce": self.get_a_nonce()})
+        job = dxpy.api.applet_run(applet.get_id(), input_params)
+        self.assertNotIn(job, jobs)
+
+        with self.assertRaises(DXAPIError):
+            input_params['input'].update({"number": 42})
+            dxpy.api.applet_run(applet.get_id(), input_params)
+
+        ## Create an app and run it.
+        app = dxpy.DXApp()
+        userid = dxpy.whoami()
+
+        app.new(applet=applet.get_id(), version="0.0.1", bill_to=userid, name="app_name_other")
+        input_params = {"input": {"number": 32}, "project": self.proj_id}
+        jobs = self.do_retry_http_request(dxpy.api.app_run,
+                                          args=[app.get_id()],
+                                          kwargs={"input_params": input_params})
+        self.assertEqual(jobs[0], jobs[1])
+
+        job = dxpy.api.app_run(app.get_id(), input_params=input_params)
+        self.assertNotIn(job, jobs)
+        jobs.append(job)
+
+        input_params.update({"nonce": self.get_a_nonce()})
+        job = dxpy.api.applet_run(applet.get_id(), input_params)
+        self.assertNotIn(job, jobs)
+        with self.assertRaises(DXAPIError):
+            input_params['input'].update({"number": 42})
+            dxpy.api.applet_run(applet.get_id(), input_params)
+
+    @unittest.skipUnless(testutil.TEST_ISOLATED_ENV, 'skipping test that would create an org')
+    def test_idempotent_org_creation(self):
+        input_params = {"name": "test_org", "handle": "some_handle"}
+        orgs = self.do_retry_http_request(dxpy.api.org_new, kwargs={"input_params": input_params})
+        self.assertItemsEqual(orgs[0], orgs[1])
+
+        input_params = {"name": "test_org2", "handle": "another_handle"}
+        org = dxpy.api.org_new(input_params=input_params)
+        self.assertNotIn(org, orgs)
+        orgs.append(org)
+
+        input_params = {"name": "test_org3", "handle": "another_handle_3", "nonce": self.get_a_nonce()}
+        org = dxpy.api.org_new(input_params=input_params)
+        self.assertNotIn(org, orgs)
+        with self.assertRaises(DXAPIError):
+            input_params.update({"name": "another_test_org"})
+            dxpy.api.org_new(input_params=input_params)
 
 
 if __name__ == '__main__':
