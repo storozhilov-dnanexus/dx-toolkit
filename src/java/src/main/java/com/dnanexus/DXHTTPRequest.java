@@ -168,13 +168,7 @@ public class DXHTTPRequest {
      */
     public JsonNode request(String resource, JsonNode data, RetryStrategy retryStrategy) {
         String dataAsString = data.toString();
-        System.err.println("DXHTTPRequest::request(): Making request to '" + resource + "' resource: " + dataAsString);
-//        return requestImpl(resource, dataAsString, true, retryStrategy).responseJson;
-        DXHTTPRequest.ParsedResponse response = requestImpl(resource, dataAsString, true, retryStrategy);
-        JsonNode responseJson = response.responseJson;
-        System.err.println("DXHTTPRequest::request(): Response is: " + responseJson.toString());
-        System.err.println("--------------------------------------------------------------");
-        return responseJson;
+        return requestImpl(resource, dataAsString, true, retryStrategy).responseJson;
     }
 
     /**
@@ -209,14 +203,15 @@ public class DXHTTPRequest {
      *         response (includes HTTP protocol errors).
      */
     public String request(String resource, String data, RetryStrategy retryStrategy) {
-        System.err.println("Sending data to '" + resource + "' resource: " + data);
         return requestImpl(resource, data, false, retryStrategy).responseText;
     }
 
-    private int generateRetryInterval(int attempts) {
-        int lowerBound = Math.min((int) Math.pow(2, attempts - 1), MAX_RETRY_INTERVAL_SEC / 2);
-        int upperBound = Math.min((int) Math.pow(2, attempts), MAX_RETRY_INTERVAL_SEC);
-        System.out.println("Generating random number between " + lowerBound + " and " + upperBound);
+    /**
+     * Generates a random retry interval in seconds
+     */
+    private int generateRetryInterval(int numAttempts) {
+        int lowerBound = Math.min((int) Math.pow(2, numAttempts - 1), MAX_RETRY_INTERVAL_SEC / 2);
+        int upperBound = Math.min((int) Math.pow(2, numAttempts), MAX_RETRY_INTERVAL_SEC);
         return randomGenerator.nextInt(upperBound - lowerBound + 1) + lowerBound;
     }
 
