@@ -82,6 +82,68 @@ TEST(DXHTTPRequestTest, retryLogicWithRetryAfter) {
   ASSERT_LE(localTimeElapsed, 16000);
 }
 
+////////////////////////////
+// Retry logic (mock API) //
+////////////////////////////
+#ifdef __unix__
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <string.h>
+#endif
+
+class DXHTTPRequestRetryTest : public ::testing::Test
+{
+protected:
+    virtual void SetUp() {
+        cerr << __PRETTY_FUNCTION__ << endl;
+#ifdef __unix__
+        apiMockPid = fork();
+        if (apiMockPid == 0) {
+            // Launching API mock object
+            execl("/usr/bin/python", "../../../python/test/mock_api/apiserver_mock.py", "../../../python/test/mock_api/test_retry.py", static_cast<char *>(0));
+            ostringstream msg;
+            msg << "Error launching API mock object: " << strerror(errno);
+            throw runtime_error(msg.str());
+        }
+        cerr << "API mock object started with pid " << apiMockPid << endl;
+#endif
+        // Await for API mock object to start
+        usleep(500000);
+    }
+    virtual void TearDown() {
+        cerr << __PRETTY_FUNCTION__ << endl;
+#ifdef __unix__
+        cerr << "Stopping API mock object using pid " << apiMockPid << endl;
+        if (kill(apiMockPid, SIGTERM) != 0) {
+            throw runtime_error(strerror(errno));
+        }
+        int status;
+        pid_t p = waitpid(apiMockPid, &status, 0);
+        if (p != apiMockPid) {
+            ostringstream msg;
+            msg << "Pid of the stopped process " << p << " does not equal to API mock object pid " << apiMockPid;
+            throw runtime_error(msg.str());
+        }
+        int exitStatus = WEXITSTATUS(status);
+        if (exitStatus != 0) {
+            ostringstream msg;
+            msg << "API mock object process (pid = " << apiMockPid << ") terminated with " << exitStatus << " exit status" << endl;
+            throw runtime_error(msg.str());
+        }
+#endif
+    }
+private:
+#ifdef __unix__
+    pid_t apiMockPid;
+#endif
+};
+
+TEST_F(DXHTTPRequestRetryTest, retry500) {
+  ASSERT_EQ(1, 1);
+}
+
 ////////////
 // DXLink //
 ////////////
