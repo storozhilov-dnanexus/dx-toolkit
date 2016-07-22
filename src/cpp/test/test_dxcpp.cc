@@ -18,6 +18,8 @@
 #include <fstream>
 #include <string>
 #include <boost/lexical_cast.hpp>
+#include <boost/filesystem.hpp>
+#include <curl/curl.h>
 #include <gtest/gtest.h>
 #include "dxjson/dxjson.h"
 #include "dxcpp.h"
@@ -93,32 +95,43 @@ TEST(DXHTTPRequestTest, retryLogicWithRetryAfter) {
 #include <string.h>
 #endif
 
+char * executableName = 0;
+
 class DXHTTPRequestRetryTest : public ::testing::Test
 {
 protected:
     virtual void SetUp() {
         cerr << __PRETTY_FUNCTION__ << endl;
+        boost::filesystem::path ep = boost::filesystem::current_path() / executableName;
+        boost::filesystem::path apiMockPath = ep.parent_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "apiserver_mock.py";
+        boost::filesystem::path apiMockHandlerPath = ep.parent_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "test_retry.py";
 #ifdef __unix__
         apiMockPid = fork();
         if (apiMockPid == 0) {
             // Launching API mock object
-            execl("/usr/bin/python", "../../../python/test/mock_api/apiserver_mock.py", "../../../python/test/mock_api/test_retry.py", static_cast<char *>(0));
+            //execl("/bin/sh", "sh", "-c", cmd.str().c_str(), static_cast<char *>(0));
+            //execl("/bin/sh", "python", apiMockPath.string().c_str(), apiMockHandlerPath.string().c_str(), static_cast<char *>(0));
+            ostringstream cmd;
+            cmd << "python " << apiMockPath.string() << ' ' << apiMockHandlerPath.string();
+            execl("/bin/sh", cmd.str().c_str(), static_cast<char *>(0));
             ostringstream msg;
             msg << "Error launching API mock object: " << strerror(errno);
             throw runtime_error(msg.str());
         }
         cerr << "API mock object started with pid " << apiMockPid << endl;
-#endif
         // Await for API mock object to start
-        usleep(500000);
+        //usleep(500000);
+        usleep(1000000);
+#endif
     }
     virtual void TearDown() {
         cerr << __PRETTY_FUNCTION__ << endl;
 #ifdef __unix__
-        cerr << "Stopping API mock object using pid " << apiMockPid << endl;
+        cerr << "Sending SIGTERM to API mock object using pid " << apiMockPid << endl;
         if (kill(apiMockPid, SIGTERM) != 0) {
             throw runtime_error(strerror(errno));
         }
+        cerr << "Awaiting for API mock to stop pid " << apiMockPid << endl;
         int status;
         pid_t p = waitpid(apiMockPid, &status, 0);
         if (p != apiMockPid) {
@@ -134,6 +147,22 @@ protected:
         }
 #endif
     }
+
+    void checkRetry(const char * mode) {
+        //CURL *curl;
+        //CURLcode res;
+
+        CURL * curl = curl_easy_init();
+        if (!curl) {
+            throw runtime_error("curl_easy_init() call error");
+        }
+        ostringstream url;
+        url << "http://localhost:8080/set_testing_mode/" << mode;
+        curl_easy_setopt(curl, CURLOPT_URL, url.str().c_str());
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+        curl_easy_perform(curl);
+        curl_easy_cleanup(curl);
+    }
 private:
 #ifdef __unix__
     pid_t apiMockPid;
@@ -141,7 +170,7 @@ private:
 };
 
 TEST_F(DXHTTPRequestRetryTest, retry500) {
-  ASSERT_EQ(1, 1);
+    checkRetry("500");
 }
 
 ////////////
@@ -1604,6 +1633,7 @@ TEST(DXAppTest, AllAppTests) {
 // }
 
 int main(int argc, char **argv) {
+  executableName = argv[0];
   testing::InitGoogleTest(&argc, argv);
   {
     DXTEST_FULL = false;

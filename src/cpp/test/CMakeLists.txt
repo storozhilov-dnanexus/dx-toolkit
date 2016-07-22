@@ -7,6 +7,8 @@ if (NOT DEFINED ENV{DNANEXUS_HOME})
   message(FATAL_ERROR "Environment variable DNANEXUS_HOME (location of dx-toolkit) not defined")
 endif (NOT DEFINED ENV{DNANEXUS_HOME})
 
+find_package(Boost 1.48 COMPONENTS filesystem REQUIRED)
+
 # Set default build type, common compiler flags, etc
 include("$ENV{DNANEXUS_HOME}/src/cpp/cmake_include/set_compiler_flags.txt" NO_POLICY_SCOPE)
 
@@ -17,7 +19,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/gtest gtest)
 
 # dxcpp_tests
 add_executable(test_dxcpp test_dxcpp.cc)
-target_link_libraries(test_dxcpp dxcpp gtest)
+target_link_libraries(test_dxcpp dxcpp gtest ${Boost_LIBRARIES})
 
 # simple http tests
 add_executable(test_simplehttp test_simplehttp.cpp)
