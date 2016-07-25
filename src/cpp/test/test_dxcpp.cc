@@ -102,9 +102,19 @@ class DXHTTPRequestRetryTest : public ::testing::Test
 protected:
     virtual void SetUp() {
         cerr << __PRETTY_FUNCTION__ << endl;
+        // Curl initalization
+        curl = curl_easy_init();
+        assert(curl);
+        assert(curl_easy_setopt(curl, CURLOPT_WRITEDATA, static_cast<void *>(this)) == CURLE_OK);
+        assert(curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteCallback) == CURLE_OK);
+        assert(curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L) == CURLE_OK);
+        respData.str("");
+
+        // Starting APIserver mock object
         boost::filesystem::path ep = boost::filesystem::current_path() / executableName;
         boost::filesystem::path apiMockPath = ep.parent_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "apiserver_mock.py";
         boost::filesystem::path apiMockHandlerPath = ep.parent_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "test_retry.py";
+        return;
 #ifdef __unix__
         apiMockPid = fork();
         if (apiMockPid == 0) {
@@ -121,11 +131,13 @@ protected:
         cerr << "API mock object started with pid " << apiMockPid << endl;
         // Await for API mock object to start
         //usleep(500000);
-        usleep(1000000);
+        usleep(1000000000);
 #endif
     }
     virtual void TearDown() {
         cerr << __PRETTY_FUNCTION__ << endl;
+        curl_easy_cleanup(curl);
+        return;
 #ifdef __unix__
         cerr << "Sending SIGTERM to API mock object using pid " << apiMockPid << endl;
         if (kill(apiMockPid, SIGTERM) != 0) {
@@ -148,25 +160,37 @@ protected:
 #endif
     }
 
-    void checkRetry(const char * mode) {
-        //CURL *curl;
-        //CURLcode res;
+    static size_t curlWriteCallback(char *ptr, size_t size, size_t nmemb, void * userdata)
+    {
+        DXHTTPRequestRetryTest * test = static_cast<DXHTTPRequestRetryTest *>(userdata);
+        size_t dataSize = size * nmemb;
+        cerr << __PRETTY_FUNCTION__ << ": " << dataSize << " bytes of data received: '" << string(ptr, dataSize) << '\'' << endl;
+        test->respData.write(ptr, dataSize);
+        return dataSize;
+    }
 
-        CURL * curl = curl_easy_init();
-        if (!curl) {
-            throw runtime_error("curl_easy_init() call error");
-        }
+    void checkRetry(const char * mode) {
         ostringstream url;
         url << "http://localhost:8080/set_testing_mode/" << mode;
-        curl_easy_setopt(curl, CURLOPT_URL, url.str().c_str());
-        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-        curl_easy_perform(curl);
-        curl_easy_cleanup(curl);
+        assert(curl_easy_setopt(curl, CURLOPT_URL, url.str().c_str()) == CURLE_OK);
+        assert(curl_easy_perform(curl) == CURLE_OK);
+        cerr << __PRETTY_FUNCTION__ << ": response data is \'" << respData.str() << '\'' << endl;
+        JSON respJson = JSON::parse(respData.str());
+
+        // TODO: Call 'whoami' API call
+
+        respData.str("");
+        assert(curl_easy_setopt(curl, CURLOPT_URL, "http://127.0.0.1:8080/stats") == CURLE_OK);
+        assert(curl_easy_perform(curl) == CURLE_OK);
+        cerr << __PRETTY_FUNCTION__ << ": response data is \'" << respData.str() << '\'' << endl;
+        respJson = JSON::parse(respData.str());
     }
 private:
 #ifdef __unix__
     pid_t apiMockPid;
 #endif
+    CURL * curl;
+    ostringstream respData;
 };
 
 TEST_F(DXHTTPRequestRetryTest, retry500) {
