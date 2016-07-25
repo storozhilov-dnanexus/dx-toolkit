@@ -19,7 +19,9 @@
 #include <string>
 #include <boost/lexical_cast.hpp>
 #include <boost/filesystem.hpp>
+#include <boost/date_time.hpp>
 #include <curl/curl.h>
+#include <cmath>
 #include <gtest/gtest.h>
 #include "dxjson/dxjson.h"
 #include "dxcpp.h"
@@ -110,6 +112,14 @@ protected:
         assert(curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L) == CURLE_OK);
         respData.str("");
 
+        // Configuring dx API to use APIserver mock object
+        apiServerProtocolBakup.assign("http");
+        apiServerHostBakup.assign("localhost");
+        apiServerPortBakup.assign("8080");
+        config::APISERVER_PROTOCOL().swap(apiServerProtocolBakup);
+        config::APISERVER_HOST().swap(apiServerHostBakup);
+        config::APISERVER_PORT().swap(apiServerPortBakup);
+
         // Starting APIserver mock object
         boost::filesystem::path ep = boost::filesystem::current_path() / executableName;
         boost::filesystem::path apiMockPath = ep.parent_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "apiserver_mock.py";
@@ -136,6 +146,11 @@ protected:
     }
     virtual void TearDown() {
         cerr << __PRETTY_FUNCTION__ << endl;
+
+        config::APISERVER_PROTOCOL().swap(apiServerProtocolBakup);
+        config::APISERVER_HOST().swap(apiServerHostBakup);
+        config::APISERVER_PORT().swap(apiServerPortBakup);
+
         curl_easy_cleanup(curl);
         return;
 #ifdef __unix__
@@ -169,21 +184,57 @@ protected:
         return dataSize;
     }
 
-    void checkRetry(const char * mode) {
+    void checkRetry(const string& testingMode) {
         ostringstream url;
-        url << "http://localhost:8080/set_testing_mode/" << mode;
+        url << "http://localhost:8080/set_testing_mode/" << testingMode;
         assert(curl_easy_setopt(curl, CURLOPT_URL, url.str().c_str()) == CURLE_OK);
         assert(curl_easy_perform(curl) == CURLE_OK);
         cerr << __PRETTY_FUNCTION__ << ": response data is \'" << respData.str() << '\'' << endl;
         JSON respJson = JSON::parse(respData.str());
 
-        // TODO: Call 'whoami' API call
+        systemWhoami(std::string("{}"), true);
 
         respData.str("");
         assert(curl_easy_setopt(curl, CURLOPT_URL, "http://127.0.0.1:8080/stats") == CURLE_OK);
         assert(curl_easy_perform(curl) == CURLE_OK);
         cerr << __PRETTY_FUNCTION__ << ": response data is \'" << respData.str() << '\'' << endl;
         respJson = JSON::parse(respData.str());
+
+        JSON postRequests = respJson["postRequests"];
+        for (size_t i = 1; i < postRequests.length(); ++i) {
+            boost::posix_time::ptime tried = boost::date_time::parse_delimited_time<boost::posix_time::ptime>(postRequests[i - 1]["timestamp"].get<string>(), 'T');
+            boost::posix_time::ptime retried = boost::date_time::parse_delimited_time<boost::posix_time::ptime>(postRequests[i]["timestamp"].get<string>(), 'T');
+            double interval = static_cast<double>((retried - tried).total_milliseconds()) / 1000.0;
+            //cerr << __PRETTY_FUNCTION__ << ": Interval is '" << (static_cast<double>(interval.total_milliseconds()) / 1000.0) << " sec" << endl;
+            if (testingMode == "503_retry_after") {
+                ASSERT_LE(static_cast<double>(i), interval);
+                ASSERT_LE(interval, (static_cast<double>(i) + 0.5));
+            } else if ((testingMode == "503_mixed" && i == 3) || (testingMode == "mixed" && i == 4)) {
+                ASSERT_LE(2.0, interval);
+                ASSERT_LE(interval, 2.5);
+            } else if (testingMode == "503_mixed_limited") {
+                if (i < 11) {
+                    ASSERT_LE(1.0, interval);
+                    ASSERT_LE(interval, 1.5);
+                } else {
+                    ASSERT_LE(300.0, interval);
+                    ASSERT_LE(interval, 600.5);
+                }
+            } else {
+                ASSERT_LE(pow(2.0, static_cast<double>(i - 1)), interval);
+                ASSERT_LE(interval, pow(2.0, static_cast<double>(i) + 0.5));
+            }
+        }
+
+        if (testingMode == "500_fail") {
+            //ASSERT_FALSE(exceptionRaised);
+            ASSERT_EQ(7, postRequests.length());
+        } else if (testingMode == "503_mixed_limited") {
+            ASSERT_EQ(12, postRequests.length());
+        } else {
+            //ASSERT_TRUE(exceptionRaised);
+            ASSERT_EQ(5, postRequests.length());
+        }
     }
 private:
 #ifdef __unix__
@@ -191,10 +242,37 @@ private:
 #endif
     CURL * curl;
     ostringstream respData;
+    string apiServerProtocolBakup;
+    string apiServerHostBakup;
+    string apiServerPortBakup;
 };
 
 TEST_F(DXHTTPRequestRetryTest, retry500) {
     checkRetry("500");
+}
+
+TEST_F(DXHTTPRequestRetryTest, retry500fail) {
+    checkRetry("500_fail");
+}
+
+TEST_F(DXHTTPRequestRetryTest, retry503) {
+    checkRetry("503");
+}
+
+TEST_F(DXHTTPRequestRetryTest, retry503RetryAfter) {
+    checkRetry("503_retry_after");
+}
+
+TEST_F(DXHTTPRequestRetryTest, retry503mixed) {
+    checkRetry("503_mixed");
+}
+
+TEST_F(DXHTTPRequestRetryTest, retry503mixedLimited) {
+    checkRetry("503_mixed_limited");
+}
+
+TEST_F(DXHTTPRequestRetryTest, retryMixed) {
+    checkRetry("mixed");
 }
 
 ////////////

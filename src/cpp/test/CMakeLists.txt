@@ -7,7 +7,7 @@ if (NOT DEFINED ENV{DNANEXUS_HOME})
   message(FATAL_ERROR "Environment variable DNANEXUS_HOME (location of dx-toolkit) not defined")
 endif (NOT DEFINED ENV{DNANEXUS_HOME})
 
-find_package(Boost 1.48 COMPONENTS filesystem REQUIRED)
+find_package(Boost 1.48 COMPONENTS filesystem date_time REQUIRED)
 
 # Set default build type, common compiler flags, etc
 include("$ENV{DNANEXUS_HOME}/src/cpp/cmake_include/set_compiler_flags.txt" NO_POLICY_SCOPE)
