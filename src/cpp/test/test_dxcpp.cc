@@ -192,7 +192,14 @@ protected:
         cerr << __PRETTY_FUNCTION__ << ": response data is \'" << respData.str() << '\'' << endl;
         JSON respJson = JSON::parse(respData.str());
 
-        systemWhoami(std::string("{}"), true);
+        bool exceptionRaised = false;
+        try {
+            systemWhoami(std::string("{}"), true);
+        } catch (DXError&) {
+            exceptionRaised = true;
+        } catch (JSONException&) {
+            exceptionRaised = true;
+        }
 
         respData.str("");
         assert(curl_easy_setopt(curl, CURLOPT_URL, "http://127.0.0.1:8080/stats") == CURLE_OK);
@@ -201,7 +208,7 @@ protected:
         respJson = JSON::parse(respData.str());
 
         JSON postRequests = respJson["postRequests"];
-        for (size_t i = 1; i < postRequests.length(); ++i) {
+        for (size_t i = 1u; i < postRequests.length(); ++i) {
             boost::posix_time::ptime tried = boost::date_time::parse_delimited_time<boost::posix_time::ptime>(postRequests[i - 1]["timestamp"].get<string>(), 'T');
             boost::posix_time::ptime retried = boost::date_time::parse_delimited_time<boost::posix_time::ptime>(postRequests[i]["timestamp"].get<string>(), 'T');
             double interval = static_cast<double>((retried - tried).total_milliseconds()) / 1000.0;
@@ -209,11 +216,11 @@ protected:
             if (testingMode == "503_retry_after") {
                 ASSERT_LE(static_cast<double>(i), interval);
                 ASSERT_LE(interval, (static_cast<double>(i) + 0.5));
-            } else if ((testingMode == "503_mixed" && i == 3) || (testingMode == "mixed" && i == 4)) {
+            } else if ((testingMode == "503_mixed" && i == 3u) || (testingMode == "mixed" && i == 4u)) {
                 ASSERT_LE(2.0, interval);
                 ASSERT_LE(interval, 2.5);
             } else if (testingMode == "503_mixed_limited") {
-                if (i < 11) {
+                if (i < 11u) {
                     ASSERT_LE(1.0, interval);
                     ASSERT_LE(interval, 1.5);
                 } else {
@@ -227,13 +234,13 @@ protected:
         }
 
         if (testingMode == "500_fail") {
-            //ASSERT_FALSE(exceptionRaised);
-            ASSERT_EQ(7, postRequests.length());
+            ASSERT_TRUE(exceptionRaised);
+            ASSERT_EQ(7u, postRequests.length());
         } else if (testingMode == "503_mixed_limited") {
-            ASSERT_EQ(12, postRequests.length());
+            ASSERT_EQ(12u, postRequests.length());
         } else {
-            //ASSERT_TRUE(exceptionRaised);
-            ASSERT_EQ(5, postRequests.length());
+            ASSERT_TRUE(exceptionRaised);
+            ASSERT_EQ(5u, postRequests.length());
         }
     }
 private:

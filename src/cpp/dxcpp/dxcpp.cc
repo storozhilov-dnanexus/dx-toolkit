@@ -111,7 +111,7 @@ namespace dx {
                   << " --safeToRetry = " << safeToRetry << endl
                   << " --data = '" << data.substr(0, 100) << "'" << endl
                   << " --headers = '" << JSON(headers).toString() << "'";
-    const unsigned int NUM_MAX_RETRIES = 5u; // maximum number of retries for an individual request
+    const unsigned int NUM_MAX_RETRIES = 6u; // maximum number of retries for an individual request
 
     if (config::APISERVER().empty()) {
       throw DXError("dxcpp::DXHTTPRequest()-> API server information not found. Please set DX_APISERVER_HOST, DX_APISERVER_PORT, and DX_APISERVER_PROTOCOL.", "ApiserverInfoMissing");
@@ -255,6 +255,9 @@ namespace dx {
 
       // 503 with Retry-After-- do not count such responses against the allowed
       // number of retries
+      if (req.responseCode == 503) {
+          // TODO: Calculate retry interval here.
+      }
       if (serviceUnavailable) {
         DXLOG(logWARNING) << "Service unavailable, waiting for " << retryAfterSeconds << " seconds : POST '" << url << "'";
         boost::this_thread::interruption_point();
