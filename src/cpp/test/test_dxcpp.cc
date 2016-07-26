@@ -237,9 +237,10 @@ protected:
             ASSERT_TRUE(exceptionRaised);
             ASSERT_EQ(7u, postRequests.length());
         } else if (testingMode == "503_mixed_limited") {
+            ASSERT_FALSE(exceptionRaised);
             ASSERT_EQ(12u, postRequests.length());
         } else {
-            ASSERT_TRUE(exceptionRaised);
+            ASSERT_FALSE(exceptionRaised);
             ASSERT_EQ(5u, postRequests.length());
         }
     }
@@ -258,7 +259,11 @@ TEST_F(DXHTTPRequestRetryTest, retry500) {
     checkRetry("500");
 }
 
-TEST_F(DXHTTPRequestRetryTest, retry500fail) {
+TEST_F(DXHTTPRequestRetryTest, retry500Fail) {
+    if (!DXTEST_FULL) {
+        cerr << "Skipping DXHTTPRequestRetryTest.retry500Fail test because DXTEST_FULL was not set" << endl;
+        return;
+    }
     checkRetry("500_fail");
 }
 
@@ -270,15 +275,19 @@ TEST_F(DXHTTPRequestRetryTest, retry503RetryAfter) {
     checkRetry("503_retry_after");
 }
 
-TEST_F(DXHTTPRequestRetryTest, retry503mixed) {
+TEST_F(DXHTTPRequestRetryTest, retry503Mixed) {
     checkRetry("503_mixed");
 }
 
-TEST_F(DXHTTPRequestRetryTest, retry503mixedLimited) {
+TEST_F(DXHTTPRequestRetryTest, retry503MixedLimited) {
+    if (!DXTEST_FULL) {
+        cerr << "Skipping DXHTTPRequestRetryTest.retry503MixedLimited test because DXTEST_FULL was not set" << endl;
+        return;
+    }
     checkRetry("503_mixed_limited");
 }
 
-TEST_F(DXHTTPRequestRetryTest, retryMixed) {
+TEST_F(DXHTTPRequestRetryTest, retry5xxMixed) {
     checkRetry("mixed");
 }
 
