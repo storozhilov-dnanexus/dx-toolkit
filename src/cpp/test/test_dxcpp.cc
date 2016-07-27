@@ -95,6 +95,9 @@ TEST(DXHTTPRequestTest, retryLogicWithRetryAfter) {
 #include <sys/wait.h>
 #include <signal.h>
 #include <string.h>
+
+#define PIPE_READ 0
+#define PIPE_WRITE 1
 #endif
 
 char * executableName = 0;
@@ -124,24 +127,55 @@ protected:
         boost::filesystem::path ep = boost::filesystem::current_path() / executableName;
         boost::filesystem::path apiMockPath = ep.parent_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "apiserver_mock.py";
         boost::filesystem::path apiMockHandlerPath = ep.parent_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "test_retry.py";
-        return;
 #ifdef __unix__
+        /*int stdinPipe[2];
+        assert(pipe(stdinPipe) == 0);
+        int stdoutPipe[2];
+        assert(pipe(stdoutPipe) == 0);*/
+
+        sigset_t mask;
+        sigemptyset(&mask);
+        sigaddset(&mask, SIGCHLD);
+        sigprocmask(SIG_BLOCK, &mask, &omask);
+
         apiMockPid = fork();
+        assert(apiMockPid >= 0);
         if (apiMockPid == 0) {
+            // Child process
+            sigprocmask(SIG_SETMASK, &omask, NULL);
+
+            /*assert(dup2(stdinPipe[PIPE_READ], STDIN_FILENO) >= 0);
+            assert(dup2(stdoutPipe[PIPE_WRITE], STDOUT_FILENO) >= 0);
+            assert(dup2(stdoutPipe[PIPE_WRITE], STDERR_FILENO) >= 0);
+
+            close(stdinPipe[PIPE_READ]);
+            close(stdinPipe[PIPE_WRITE]);
+            close(stdoutPipe[PIPE_READ]);
+            close(stdoutPipe[PIPE_WRITE]);*/
+
             // Launching API mock object
-            //execl("/bin/sh", "sh", "-c", cmd.str().c_str(), static_cast<char *>(0));
             //execl("/bin/sh", "python", apiMockPath.string().c_str(), apiMockHandlerPath.string().c_str(), static_cast<char *>(0));
             ostringstream cmd;
             cmd << "python " << apiMockPath.string() << ' ' << apiMockHandlerPath.string();
-            execl("/bin/sh", cmd.str().c_str(), static_cast<char *>(0));
+            execl("/bin/sh", "sh", "-c", cmd.str().c_str(), static_cast<char *>(0));
+
+            //FILE * pipe = popen(cmd.str().c_str(), "w")
+            //system(cmd.str().c_str());
+            //usleep(1000000000);
+            //exit(0);
+
+            //execl("/bin/sh", cmd.str().c_str(), static_cast<char *>(0));
+            //execl("/usr/bin/python", apiMockPath.string().c_str(), apiMockHandlerPath.string().c_str(), static_cast<char *>(0));
             ostringstream msg;
             msg << "Error launching API mock object: " << strerror(errno);
             throw runtime_error(msg.str());
         }
+        //close(stdinPipe[PIPE_READ]);
+        //close(stdoutPipe[PIPE_WRITE]);
         cerr << "API mock object started with pid " << apiMockPid << endl;
         // Await for API mock object to start
-        //usleep(500000);
-        usleep(1000000000);
+        usleep(500000);
+        //usleep(1000000000);
 #endif
     }
     virtual void TearDown() {
@@ -152,7 +186,7 @@ protected:
         config::APISERVER_PORT().swap(apiServerPortBakup);
 
         curl_easy_cleanup(curl);
-        return;
+        //return;
 #ifdef __unix__
         cerr << "Sending SIGTERM to API mock object using pid " << apiMockPid << endl;
         if (kill(apiMockPid, SIGTERM) != 0) {
@@ -161,7 +195,10 @@ protected:
         cerr << "Awaiting for API mock to stop pid " << apiMockPid << endl;
         int status;
         pid_t p = waitpid(apiMockPid, &status, 0);
-        if (p != apiMockPid) {
+        assert(p == apiMockPid);
+        assert(WEXITSTATUS(status) == 0);
+        sigprocmask(SIG_SETMASK, &omask, NULL);
+/*        if (p != apiMockPid) {
             ostringstream msg;
             msg << "Pid of the stopped process " << p << " does not equal to API mock object pid " << apiMockPid;
             throw runtime_error(msg.str());
@@ -171,7 +208,7 @@ protected:
             ostringstream msg;
             msg << "API mock object process (pid = " << apiMockPid << ") terminated with " << exitStatus << " exit status" << endl;
             throw runtime_error(msg.str());
-        }
+        }*/
 #endif
     }
 
@@ -247,6 +284,7 @@ protected:
 private:
 #ifdef __unix__
     pid_t apiMockPid;
+    sigset_t omask;
 #endif
     CURL * curl;
     ostringstream respData;
