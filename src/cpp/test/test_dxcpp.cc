@@ -26,6 +26,16 @@
 #include "dxjson/dxjson.h"
 #include "dxcpp.h"
 
+#ifdef __unix__
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <string.h>
+#else
+// TODO: win32 subprocess management includes
+#endif
+
 using namespace std;
 using namespace dx;
 
@@ -89,16 +99,6 @@ TEST(DXHTTPRequestTest, retryLogicWithRetryAfter) {
 ////////////////////////////
 // Retry logic (mock API) //
 ////////////////////////////
-#ifdef __unix__
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <string.h>
-
-#define PIPE_READ 0
-#define PIPE_WRITE 1
-#endif
 
 char * executableName = 0;
 
@@ -128,11 +128,6 @@ protected:
         boost::filesystem::path apiMockPath = ep.parent_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "apiserver_mock.py";
         boost::filesystem::path apiMockHandlerPath = ep.parent_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "test_retry.py";
 #ifdef __unix__
-        /*int stdinPipe[2];
-        assert(pipe(stdinPipe) == 0);
-        int stdoutPipe[2];
-        assert(pipe(stdoutPipe) == 0);*/
-
         sigset_t mask;
         sigemptyset(&mask);
         sigaddset(&mask, SIGCHLD);
@@ -141,41 +136,18 @@ protected:
         apiMockPid = fork();
         assert(apiMockPid >= 0);
         if (apiMockPid == 0) {
-            // Child process
+            // Launching API mock object in the child process
             sigprocmask(SIG_SETMASK, &omask, NULL);
-
-            /*assert(dup2(stdinPipe[PIPE_READ], STDIN_FILENO) >= 0);
-            assert(dup2(stdoutPipe[PIPE_WRITE], STDOUT_FILENO) >= 0);
-            assert(dup2(stdoutPipe[PIPE_WRITE], STDERR_FILENO) >= 0);
-
-            close(stdinPipe[PIPE_READ]);
-            close(stdinPipe[PIPE_WRITE]);
-            close(stdoutPipe[PIPE_READ]);
-            close(stdoutPipe[PIPE_WRITE]);*/
-
-            // Launching API mock object
-            //execl("/bin/sh", "python", apiMockPath.string().c_str(), apiMockHandlerPath.string().c_str(), static_cast<char *>(0));
-            ostringstream cmd;
-            cmd << "python " << apiMockPath.string() << ' ' << apiMockHandlerPath.string();
-            execl("/bin/sh", "sh", "-c", cmd.str().c_str(), static_cast<char *>(0));
-
-            //FILE * pipe = popen(cmd.str().c_str(), "w")
-            //system(cmd.str().c_str());
-            //usleep(1000000000);
-            //exit(0);
-
-            //execl("/bin/sh", cmd.str().c_str(), static_cast<char *>(0));
-            //execl("/usr/bin/python", apiMockPath.string().c_str(), apiMockHandlerPath.string().c_str(), static_cast<char *>(0));
+            execl("/usr/bin/python", "python", apiMockPath.string().c_str(), apiMockHandlerPath.string().c_str(), static_cast<char *>(0));
             ostringstream msg;
             msg << "Error launching API mock object: " << strerror(errno);
             throw runtime_error(msg.str());
         }
-        //close(stdinPipe[PIPE_READ]);
-        //close(stdoutPipe[PIPE_WRITE]);
         cerr << "API mock object started with pid " << apiMockPid << endl;
-        // Await for API mock object to start
+        // Awaiting for API mock object to start
         usleep(500000);
-        //usleep(1000000000);
+#else
+        // TODO: Win32 API mock object startup
 #endif
     }
     virtual void TearDown() {
@@ -186,7 +158,6 @@ protected:
         config::APISERVER_PORT().swap(apiServerPortBakup);
 
         curl_easy_cleanup(curl);
-        //return;
 #ifdef __unix__
         cerr << "Sending SIGTERM to API mock object using pid " << apiMockPid << endl;
         if (kill(apiMockPid, SIGTERM) != 0) {
@@ -198,17 +169,8 @@ protected:
         assert(p == apiMockPid);
         assert(WEXITSTATUS(status) == 0);
         sigprocmask(SIG_SETMASK, &omask, NULL);
-/*        if (p != apiMockPid) {
-            ostringstream msg;
-            msg << "Pid of the stopped process " << p << " does not equal to API mock object pid " << apiMockPid;
-            throw runtime_error(msg.str());
-        }
-        int exitStatus = WEXITSTATUS(status);
-        if (exitStatus != 0) {
-            ostringstream msg;
-            msg << "API mock object process (pid = " << apiMockPid << ") terminated with " << exitStatus << " exit status" << endl;
-            throw runtime_error(msg.str());
-        }*/
+#else
+        // TODO: Win32 API mock object termination
 #endif
     }
 
@@ -249,7 +211,6 @@ protected:
             boost::posix_time::ptime tried = boost::date_time::parse_delimited_time<boost::posix_time::ptime>(postRequests[i - 1]["timestamp"].get<string>(), 'T');
             boost::posix_time::ptime retried = boost::date_time::parse_delimited_time<boost::posix_time::ptime>(postRequests[i]["timestamp"].get<string>(), 'T');
             double interval = static_cast<double>((retried - tried).total_milliseconds()) / 1000.0;
-            //cerr << __PRETTY_FUNCTION__ << ": Interval is '" << (static_cast<double>(interval.total_milliseconds()) / 1000.0) << " sec" << endl;
             if (testingMode == "503_retry_after") {
                 ASSERT_LE(static_cast<double>(i), interval);
                 ASSERT_LE(interval, (static_cast<double>(i) + 0.5));
@@ -285,6 +246,8 @@ private:
 #ifdef __unix__
     pid_t apiMockPid;
     sigset_t omask;
+#else
+    // TODO: Win32 subprocess management members
 #endif
     CURL * curl;
     ostringstream respData;
