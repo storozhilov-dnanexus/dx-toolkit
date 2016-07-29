@@ -532,5 +532,13 @@ namespace dx {
     };
     IgnoreSIGPIPE IgnoreSIGPIPE_static_initializer;
     #endif
+
+    class RandomSeedInitializer {
+      public:
+        RandomSeedInitializer() {
+          srand(time(NULL));
+        }
+    };
+    RandomSeedInitializer randomSeedInitializer;
   }
 }
