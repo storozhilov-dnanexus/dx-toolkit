@@ -26,14 +26,14 @@
 #include "dxjson/dxjson.h"
 #include "dxcpp.h"
 
-#ifdef __unix__
+#ifdef __MINGW32__
+// TODO: win32 subprocess management includes
+#else
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <signal.h>
 #include <string.h>
-#else
-// TODO: win32 subprocess management includes
 #endif
 
 using namespace std;
@@ -127,7 +127,9 @@ protected:
         boost::filesystem::path ep = boost::filesystem::current_path() / executableName;
         boost::filesystem::path apiMockPath = ep.parent_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "apiserver_mock.py";
         boost::filesystem::path apiMockHandlerPath = ep.parent_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "test_retry.py";
-#ifdef __unix__
+#ifdef __MINGW32__
+        // TODO: Win32 API mock object startup
+#else
         sigset_t mask;
         sigemptyset(&mask);
         sigaddset(&mask, SIGCHLD);
@@ -146,8 +148,6 @@ protected:
         cerr << "API mock object started with pid " << apiMockPid << endl;
         // Awaiting for API mock object to start
         usleep(500000);
-#else
-        // TODO: Win32 API mock object startup
 #endif
     }
     virtual void TearDown() {
@@ -158,7 +158,9 @@ protected:
         config::APISERVER_PORT().swap(apiServerPortBakup);
 
         curl_easy_cleanup(curl);
-#ifdef __unix__
+#ifdef __MINGW32__
+        // TODO: Win32 API mock object termination
+#else
         cerr << "Sending SIGTERM to API mock object using pid " << apiMockPid << endl;
         if (kill(apiMockPid, SIGTERM) != 0) {
             throw runtime_error(strerror(errno));
@@ -169,8 +171,6 @@ protected:
         assert(p == apiMockPid);
         assert(WEXITSTATUS(status) == 0);
         sigprocmask(SIG_SETMASK, &omask, NULL);
-#else
-        // TODO: Win32 API mock object termination
 #endif
     }
 
@@ -243,11 +243,11 @@ protected:
         }
     }
 private:
-#ifdef __unix__
+#ifdef __MINGW32__
+    // TODO: Win32 subprocess management members
+#else
     pid_t apiMockPid;
     sigset_t omask;
-#else
-    // TODO: Win32 subprocess management members
 #endif
     CURL * curl;
     ostringstream respData;
@@ -956,7 +956,7 @@ TEST(DXFileTest_Async, UploadAndDownloadLargeFile_2_SLOW) {
   for (int64_t i = 0; i < file_size; i += chunkSize) {
     string toWrite = string(std::min(chunkSize, (file_size - i)), '#');
     dxfile.write(toWrite);
-    if (random() % 2 == 0) {
+    if (rand() % 2 == 0) {
       // Randomly flush sometime
       dxfile.flush();
     }
@@ -972,7 +972,7 @@ TEST(DXFileTest_Async, UploadAndDownloadLargeFile_2_SLOW) {
     for (int i = 0; i < chunk.size(); ++i)
       ASSERT_EQ(chunk[i], '#');
     bytes_read += chunk.size();
-    if (random() % 10 == 0) {
+    if (rand() % 10 == 0) {
       // ~1 in 10 time, stop the linear query and restart from current position
       dxfile.stopLinearQuery();
       dxfile.startLinearQuery(bytes_read);
@@ -1233,7 +1233,7 @@ TEST_F(DXGTableTest, AddRowsMultiThreadingTest_SLOW) {
     temp.push_back(data);
     dxgtable.addRows(temp);
     dxgtable2.addRows(temp);
-    if (random()%100 == 0)
+    if (rand() % 100 == 0)
       dxgtable.flush();
   }
   dxgtable.flush();
@@ -1315,7 +1315,7 @@ TEST_F(DXGTableTest, GetRowsLinearQueryTest_SLOW) {
       EXPECT_EQ(chunk[i][1].get<std::string>().length(), str_size);
       EXPECT_EQ(chunk[i][2].get<int>(), lq_row_count);
     }
-    if (random() % 10 == 0) {
+    if (rand() % 10 == 0) {
       // Randomly stop the linear query, and continue from that point onwards
       dxgtable.stopLinearQuery();
       dxgtable.startLinearQuery(JSON(JSON_NULL), lq_row_count);
@@ -1493,9 +1493,9 @@ TEST(DXSystemTest, findDataObjects) {
 
     // Note: Due to clock differences on various machine, some of these test might fail.
     //       Be aware of this fact while debugging.
-    usleep(1 * 1000000); // Sleep for 1s
+    boost::this_thread::sleep(boost::posix_time::seconds(1)); // Sleep for 1s
     int64_t ts1 = std::time(NULL) * 1000; // in ms => Time of object creation
-    usleep(10000); // Sleep for 10ms
+    boost::this_thread::sleep(boost::posix_time::milliseconds(10)); // Sleep for 10ms
     DXRecord dxrecord = DXRecord::newDXRecord();
     JSON q1(JSON_OBJECT);
     q1["created"] = JSON::parse("{\"after\": " + boost::lexical_cast<std::string>(ts1) + "}");
@@ -1508,7 +1508,7 @@ TEST(DXSystemTest, findDataObjects) {
 
     // Sleep for .5 sec, and then find all objects modified in last .25 second
     // should be zero
-    usleep(2 * 1000000); // Sleep for 2sec
+    boost::this_thread::sleep(boost::posix_time::seconds(2)); // Sleep for 2s
     q1 = JSON::parse("{\"modified\": {\"after\": \"-0.25s\"}}");
     res = DXSystem::findDataObjects(q1);
     ASSERT_EQ(res["results"].size(), 0);
