@@ -146,9 +146,9 @@ protected:
             throw runtime_error(msg.str());
         }
         cerr << "API mock object started with pid " << apiMockPid << endl;
-        // Awaiting for API mock object to start
-        usleep(500000);
 #endif
+        // Awaiting for API mock object to start
+        boost::this_thread::sleep(boost::posix_time::milliseconds(500));
     }
     virtual void TearDown() {
         cerr << __PRETTY_FUNCTION__ << endl;
