@@ -27,7 +27,7 @@
 #include "dxcpp.h"
 
 #ifdef __MINGW32__
-// TODO: win32 subprocess management includes
+#include <windows.h>
 #else
 #include <unistd.h>
 #include <sys/types.h>
@@ -124,11 +124,24 @@ protected:
         config::APISERVER_PORT().swap(apiServerPortBakup);
 
         // Starting APIserver mock object
-        boost::filesystem::path ep = boost::filesystem::current_path() / executableName;
-        boost::filesystem::path apiMockPath = ep.parent_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "apiserver_mock.py";
-        boost::filesystem::path apiMockHandlerPath = ep.parent_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "test_retry.py";
+        boost::filesystem::path apiMockPath = boost::filesystem::current_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "apiserver_mock.py";
+        boost::filesystem::path apiMockHandlerPath = boost::filesystem::current_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "test_retry.py";
 #ifdef __MINGW32__
-        // TODO: Win32 API mock object startup
+	ZeroMemory(&pi, sizeof(pi));
+
+	STARTUPINFO si;
+	ZeroMemory(&si, sizeof(si));
+	si.cb = sizeof(si);
+
+	char cmd[32768];
+	ostringstream cmdStream;
+	cmdStream << "python.exe " << apiMockPath.string() << ' ' << apiMockHandlerPath.string();
+	cmd[cmdStream.str().copy(cmd, cmdStream.str().length())] = '\0';
+	if (!CreateProcess(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+            ostringstream msg;
+            msg << "Error launching API mock object: " << GetLastError();
+            throw runtime_error(msg.str());
+	}
 #else
         sigset_t mask;
         sigemptyset(&mask);
@@ -138,7 +151,6 @@ protected:
         apiMockPid = fork();
         assert(apiMockPid >= 0);
         if (apiMockPid == 0) {
-            // Launching API mock object in the child process
             sigprocmask(SIG_SETMASK, &omask, NULL);
             execl("/usr/bin/python", "python", apiMockPath.string().c_str(), apiMockHandlerPath.string().c_str(), static_cast<char *>(0));
             ostringstream msg;
@@ -151,15 +163,20 @@ protected:
         boost::this_thread::sleep(boost::posix_time::milliseconds(500));
     }
     virtual void TearDown() {
-        cerr << __PRETTY_FUNCTION__ << endl;
-
         config::APISERVER_PROTOCOL().swap(apiServerProtocolBakup);
         config::APISERVER_HOST().swap(apiServerHostBakup);
         config::APISERVER_PORT().swap(apiServerPortBakup);
 
         curl_easy_cleanup(curl);
 #ifdef __MINGW32__
-        // TODO: Win32 API mock object termination
+	if (!TerminateProcess(pi.hProcess, 0)) {
+            ostringstream msg;
+            msg << "Error terminating API mock object: " << GetLastError();
+            throw runtime_error(msg.str());
+	}
+	assert(WaitForSingleObject(pi.hProcess, INFINITE) == WAIT_OBJECT_0);
+	assert(CloseHandle(pi.hProcess));
+	assert(CloseHandle(pi.hThread));
 #else
         cerr << "Sending SIGTERM to API mock object using pid " << apiMockPid << endl;
         if (kill(apiMockPid, SIGTERM) != 0) {
@@ -244,7 +261,7 @@ protected:
     }
 private:
 #ifdef __MINGW32__
-    // TODO: Win32 subprocess management members
+    PROCESS_INFORMATION pi;
 #else
     pid_t apiMockPid;
     sigset_t omask;
