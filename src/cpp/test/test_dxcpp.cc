@@ -89,7 +89,7 @@ TEST(DXHTTPRequestTest, retryLogicWithRetryAfter) {
   long currentTime = response["currentTime"].get<long>();
   long waitUntil = currentTime + 8000;
   DXHTTPRequest(std::string("/system/comeBackLater"),
-		std::string("{\"waitUntil\": ") + boost::lexical_cast<string>(waitUntil) + std::string("}"));
+                std::string("{\"waitUntil\": ") + boost::lexical_cast<string>(waitUntil) + std::string("}"));
   long localTimeElapsed = std::time(NULL) * 1000 - localStartTime;
   cerr << "Local time elapsed: " << localTimeElapsed;
   ASSERT_GE(localTimeElapsed, 8000);
@@ -105,208 +105,209 @@ char * executableName = 0;
 class DXHTTPRequestRetryTest : public ::testing::Test
 {
 protected:
-    virtual void SetUp() {
-        cerr << __PRETTY_FUNCTION__ << endl;
-        // Curl initalization
-        curl = curl_easy_init();
-        assert(curl);
-        assert(curl_easy_setopt(curl, CURLOPT_WRITEDATA, static_cast<void *>(this)) == CURLE_OK);
-        assert(curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteCallback) == CURLE_OK);
-        assert(curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L) == CURLE_OK);
-        respData.str("");
+  virtual void SetUp() {
+    cerr << __PRETTY_FUNCTION__ << endl;
+    // Curl initalization
+    curl = curl_easy_init();
+    assert(curl);
+    assert(curl_easy_setopt(curl, CURLOPT_WRITEDATA, static_cast<void *>(this)) == CURLE_OK);
+    assert(curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteCallback) == CURLE_OK);
+    assert(curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L) == CURLE_OK);
+    respData.str("");
 
-        // Configuring dx API to use APIserver mock object
-        apiServerProtocolBakup.assign("http");
-        apiServerHostBakup.assign("localhost");
-        apiServerPortBakup.assign("8080");
-        config::APISERVER_PROTOCOL().swap(apiServerProtocolBakup);
-        config::APISERVER_HOST().swap(apiServerHostBakup);
-        config::APISERVER_PORT().swap(apiServerPortBakup);
+    // Configuring dx API to use APIserver mock object
+    apiServerProtocolBakup.assign("http");
+    apiServerHostBakup.assign("localhost");
+    apiServerPortBakup.assign("8080");
+    config::APISERVER_PROTOCOL().swap(apiServerProtocolBakup);
+    config::APISERVER_HOST().swap(apiServerHostBakup);
+    config::APISERVER_PORT().swap(apiServerPortBakup);
 
-        // Starting APIserver mock object
-        boost::filesystem::path apiMockPath = boost::filesystem::current_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "apiserver_mock.py";
-        boost::filesystem::path apiMockHandlerPath = boost::filesystem::current_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "test_retry.py";
+    // Starting APIserver mock object
+    boost::filesystem::path apiMockPath = boost::filesystem::current_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "apiserver_mock.py";
+    boost::filesystem::path apiMockHandlerPath = boost::filesystem::current_path() / ".." / ".." / ".." / "python" / "test" / "mock_api" / "test_retry.py";
 #ifdef __MINGW32__
-	ZeroMemory(&pi, sizeof(pi));
+    ZeroMemory(&pi, sizeof(pi));
 
-	STARTUPINFO si;
-	ZeroMemory(&si, sizeof(si));
-	si.cb = sizeof(si);
+    STARTUPINFO si;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
 
-	char cmd[32768];
-	ostringstream cmdStream;
-	cmdStream << "python.exe " << apiMockPath.string() << ' ' << apiMockHandlerPath.string();
-	cmd[cmdStream.str().copy(cmd, cmdStream.str().length())] = '\0';
-	if (!CreateProcess(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
-            ostringstream msg;
-            msg << "Error launching API mock object: " << GetLastError();
-            throw runtime_error(msg.str());
-	}
-#else
-        sigset_t mask;
-        sigemptyset(&mask);
-        sigaddset(&mask, SIGCHLD);
-        sigprocmask(SIG_BLOCK, &mask, &omask);
-
-        apiMockPid = fork();
-        assert(apiMockPid >= 0);
-        if (apiMockPid == 0) {
-            sigprocmask(SIG_SETMASK, &omask, NULL);
-            execl("/usr/bin/python", "python", apiMockPath.string().c_str(), apiMockHandlerPath.string().c_str(), static_cast<char *>(0));
-            ostringstream msg;
-            msg << "Error launching API mock object: " << strerror(errno);
-            throw runtime_error(msg.str());
-        }
-        cerr << "API mock object started with pid " << apiMockPid << endl;
-#endif
-        // Awaiting for API mock object to start
-        boost::this_thread::sleep(boost::posix_time::milliseconds(500));
+    char cmd[32768];
+    ostringstream cmdStream;
+    cmdStream << "python.exe " << apiMockPath.string() << ' ' << apiMockHandlerPath.string();
+    cmd[cmdStream.str().copy(cmd, cmdStream.str().length())] = '\0';
+    if (!CreateProcess(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+      ostringstream msg;
+      msg << "Error launching API mock object: " << GetLastError();
+      throw runtime_error(msg.str());
     }
-    virtual void TearDown() {
-        config::APISERVER_PROTOCOL().swap(apiServerProtocolBakup);
-        config::APISERVER_HOST().swap(apiServerHostBakup);
-        config::APISERVER_PORT().swap(apiServerPortBakup);
+#else
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGCHLD);
+    sigprocmask(SIG_BLOCK, &mask, &omask);
 
-        curl_easy_cleanup(curl);
+    apiMockPid = fork();
+    assert(apiMockPid >= 0);
+    if (apiMockPid == 0) {
+      sigprocmask(SIG_SETMASK, &omask, NULL);
+      execl("/usr/bin/python", "python", apiMockPath.string().c_str(), apiMockHandlerPath.string().c_str(), static_cast<char *>(0));
+      ostringstream msg;
+      msg << "Error launching API mock object: " << strerror(errno);
+      throw runtime_error(msg.str());
+    }
+    cerr << "API mock object started with pid " << apiMockPid << endl;
+#endif
+    // Awaiting for API mock object to start
+    boost::this_thread::sleep(boost::posix_time::milliseconds(500));
+  }
+
+  virtual void TearDown() {
+    config::APISERVER_PROTOCOL().swap(apiServerProtocolBakup);
+    config::APISERVER_HOST().swap(apiServerHostBakup);
+    config::APISERVER_PORT().swap(apiServerPortBakup);
+
+    curl_easy_cleanup(curl);
 #ifdef __MINGW32__
-	if (!TerminateProcess(pi.hProcess, 0)) {
-            ostringstream msg;
-            msg << "Error terminating API mock object: " << GetLastError();
-            throw runtime_error(msg.str());
-	}
-	assert(WaitForSingleObject(pi.hProcess, INFINITE) == WAIT_OBJECT_0);
-	assert(CloseHandle(pi.hProcess));
-	assert(CloseHandle(pi.hThread));
+    if (!TerminateProcess(pi.hProcess, 0)) {
+      ostringstream msg;
+      msg << "Error terminating API mock object: " << GetLastError();
+      throw runtime_error(msg.str());
+    }
+    assert(WaitForSingleObject(pi.hProcess, INFINITE) == WAIT_OBJECT_0);
+    assert(CloseHandle(pi.hProcess));
+    assert(CloseHandle(pi.hThread));
 #else
-        cerr << "Sending SIGTERM to API mock object using pid " << apiMockPid << endl;
-        if (kill(apiMockPid, SIGTERM) != 0) {
-            throw runtime_error(strerror(errno));
-        }
-        cerr << "Awaiting for API mock to stop pid " << apiMockPid << endl;
-        int status;
-        pid_t p = waitpid(apiMockPid, &status, 0);
-        assert(p == apiMockPid);
-        assert(WEXITSTATUS(status) == 0);
-        sigprocmask(SIG_SETMASK, &omask, NULL);
+    cerr << "Sending SIGTERM to API mock object using pid " << apiMockPid << endl;
+    if (kill(apiMockPid, SIGTERM) != 0) {
+      throw runtime_error(strerror(errno));
+    }
+    cerr << "Awaiting for API mock to stop pid " << apiMockPid << endl;
+    int status;
+    pid_t p = waitpid(apiMockPid, &status, 0);
+    assert(p == apiMockPid);
+    assert(WEXITSTATUS(status) == 0);
+    sigprocmask(SIG_SETMASK, &omask, NULL);
 #endif
+  }
+
+  static size_t curlWriteCallback(char *ptr, size_t size, size_t nmemb, void * userdata) {
+    DXHTTPRequestRetryTest * test = static_cast<DXHTTPRequestRetryTest *>(userdata);
+    size_t dataSize = size * nmemb;
+    cerr << __PRETTY_FUNCTION__ << ": " << dataSize << " bytes of data received: '" << string(ptr, dataSize) << '\'' << endl;
+    test->respData.write(ptr, dataSize);
+    return dataSize;
+  }
+
+  void checkRetry(const string& testingMode) {
+    ostringstream url;
+    url << "http://localhost:8080/set_testing_mode/" << testingMode;
+    assert(curl_easy_setopt(curl, CURLOPT_URL, url.str().c_str()) == CURLE_OK);
+    assert(curl_easy_perform(curl) == CURLE_OK);
+    cerr << __PRETTY_FUNCTION__ << ": response data is \'" << respData.str() << '\'' << endl;
+    JSON respJson = JSON::parse(respData.str());
+
+    bool exceptionRaised = false;
+    try {
+      systemWhoami(std::string("{}"), true);
+    } catch (DXError&) {
+      exceptionRaised = true;
+    } catch (JSONException&) {
+      exceptionRaised = true;
     }
 
-    static size_t curlWriteCallback(char *ptr, size_t size, size_t nmemb, void * userdata)
-    {
-        DXHTTPRequestRetryTest * test = static_cast<DXHTTPRequestRetryTest *>(userdata);
-        size_t dataSize = size * nmemb;
-        cerr << __PRETTY_FUNCTION__ << ": " << dataSize << " bytes of data received: '" << string(ptr, dataSize) << '\'' << endl;
-        test->respData.write(ptr, dataSize);
-        return dataSize;
-    }
+    respData.str("");
+    assert(curl_easy_setopt(curl, CURLOPT_URL, "http://127.0.0.1:8080/stats") == CURLE_OK);
+    assert(curl_easy_perform(curl) == CURLE_OK);
+    cerr << __PRETTY_FUNCTION__ << ": response data is \'" << respData.str() << '\'' << endl;
+    respJson = JSON::parse(respData.str());
 
-    void checkRetry(const string& testingMode) {
-        ostringstream url;
-        url << "http://localhost:8080/set_testing_mode/" << testingMode;
-        assert(curl_easy_setopt(curl, CURLOPT_URL, url.str().c_str()) == CURLE_OK);
-        assert(curl_easy_perform(curl) == CURLE_OK);
-        cerr << __PRETTY_FUNCTION__ << ": response data is \'" << respData.str() << '\'' << endl;
-        JSON respJson = JSON::parse(respData.str());
-
-        bool exceptionRaised = false;
-        try {
-            systemWhoami(std::string("{}"), true);
-        } catch (DXError&) {
-            exceptionRaised = true;
-        } catch (JSONException&) {
-            exceptionRaised = true;
-        }
-
-        respData.str("");
-        assert(curl_easy_setopt(curl, CURLOPT_URL, "http://127.0.0.1:8080/stats") == CURLE_OK);
-        assert(curl_easy_perform(curl) == CURLE_OK);
-        cerr << __PRETTY_FUNCTION__ << ": response data is \'" << respData.str() << '\'' << endl;
-        respJson = JSON::parse(respData.str());
-
-        JSON postRequests = respJson["postRequests"];
-        for (size_t i = 1u; i < postRequests.length(); ++i) {
-            boost::posix_time::ptime tried = boost::date_time::parse_delimited_time<boost::posix_time::ptime>(postRequests[i - 1]["timestamp"].get<string>(), 'T');
-            boost::posix_time::ptime retried = boost::date_time::parse_delimited_time<boost::posix_time::ptime>(postRequests[i]["timestamp"].get<string>(), 'T');
-            double interval = static_cast<double>((retried - tried).total_milliseconds()) / 1000.0;
-            if (testingMode == "503_retry_after") {
-                ASSERT_LE(static_cast<double>(i), interval);
-                ASSERT_LE(interval, (static_cast<double>(i) + 0.5));
-            } else if ((testingMode == "503_mixed" && i == 3u) || (testingMode == "mixed" && i == 4u)) {
-                ASSERT_LE(2.0, interval);
-                ASSERT_LE(interval, 2.5);
-            } else if (testingMode == "503_mixed_limited") {
-                if (i < 11u) {
-                    ASSERT_LE(1.0, interval);
-                    ASSERT_LE(interval, 1.5);
-                } else {
-                    ASSERT_LE(300.0, interval);
-                    ASSERT_LE(interval, 600.5);
-                }
-            } else {
-                ASSERT_LE(pow(2.0, static_cast<double>(i - 1)), interval);
-                ASSERT_LE(interval, pow(2.0, static_cast<double>(i) + 0.5));
-            }
-        }
-
-        if (testingMode == "500_fail") {
-            ASSERT_TRUE(exceptionRaised);
-            ASSERT_EQ(7u, postRequests.length());
-        } else if (testingMode == "503_mixed_limited") {
-            ASSERT_FALSE(exceptionRaised);
-            ASSERT_EQ(12u, postRequests.length());
+    JSON postRequests = respJson["postRequests"];
+    for (size_t i = 1u; i < postRequests.length(); ++i) {
+      boost::posix_time::ptime tried = boost::date_time::parse_delimited_time<boost::posix_time::ptime>(postRequests[i - 1]["timestamp"].get<string>(), 'T');
+      boost::posix_time::ptime retried = boost::date_time::parse_delimited_time<boost::posix_time::ptime>(postRequests[i]["timestamp"].get<string>(), 'T');
+      double interval = static_cast<double>((retried - tried).total_milliseconds()) / 1000.0;
+      if (testingMode == "503_retry_after") {
+        ASSERT_LE(static_cast<double>(i), interval);
+        ASSERT_LE(interval, (static_cast<double>(i) + 0.5));
+      } else if ((testingMode == "503_mixed" && i == 3u) || (testingMode == "mixed" && i == 4u)) {
+        ASSERT_LE(2.0, interval);
+        ASSERT_LE(interval, 2.5);
+      } else if (testingMode == "503_mixed_limited") {
+        if (i < 11u) {
+          ASSERT_LE(1.0, interval);
+          ASSERT_LE(interval, 1.5);
         } else {
-            ASSERT_FALSE(exceptionRaised);
-            ASSERT_EQ(5u, postRequests.length());
+          ASSERT_LE(300.0, interval);
+          ASSERT_LE(interval, 600.5);
         }
+      } else {
+        ASSERT_LE(pow(2.0, static_cast<double>(i - 1)), interval);
+        ASSERT_LE(interval, pow(2.0, static_cast<double>(i) + 0.5));
+      }
     }
+
+    if (testingMode == "500_fail") {
+      ASSERT_TRUE(exceptionRaised);
+      ASSERT_EQ(7u, postRequests.length());
+    } else if (testingMode == "503_mixed_limited") {
+      ASSERT_FALSE(exceptionRaised);
+      ASSERT_EQ(12u, postRequests.length());
+    } else {
+      ASSERT_FALSE(exceptionRaised);
+      ASSERT_EQ(5u, postRequests.length());
+    }
+  }
+
 private:
 #ifdef __MINGW32__
-    PROCESS_INFORMATION pi;
+  PROCESS_INFORMATION pi;
 #else
-    pid_t apiMockPid;
-    sigset_t omask;
+  pid_t apiMockPid;
+  sigset_t omask;
 #endif
-    CURL * curl;
-    ostringstream respData;
-    string apiServerProtocolBakup;
-    string apiServerHostBakup;
-    string apiServerPortBakup;
+  CURL * curl;
+  ostringstream respData;
+  string apiServerProtocolBakup;
+  string apiServerHostBakup;
+  string apiServerPortBakup;
 };
 
 TEST_F(DXHTTPRequestRetryTest, retry500) {
-    checkRetry("500");
+  checkRetry("500");
 }
 
 TEST_F(DXHTTPRequestRetryTest, retry500Fail) {
-    if (!DXTEST_FULL) {
-        cerr << "Skipping DXHTTPRequestRetryTest.retry500Fail test because DXTEST_FULL was not set" << endl;
-        return;
-    }
-    checkRetry("500_fail");
+  if (!DXTEST_FULL) {
+    cerr << "Skipping DXHTTPRequestRetryTest.retry500Fail test because DXTEST_FULL was not set" << endl;
+    return;
+  }
+  checkRetry("500_fail");
 }
 
 TEST_F(DXHTTPRequestRetryTest, retry503) {
-    checkRetry("503");
+  checkRetry("503");
 }
 
 TEST_F(DXHTTPRequestRetryTest, retry503RetryAfter) {
-    checkRetry("503_retry_after");
+  checkRetry("503_retry_after");
 }
 
 TEST_F(DXHTTPRequestRetryTest, retry503Mixed) {
-    checkRetry("503_mixed");
+  checkRetry("503_mixed");
 }
 
 TEST_F(DXHTTPRequestRetryTest, retry503MixedLimited) {
-    if (!DXTEST_FULL) {
-        cerr << "Skipping DXHTTPRequestRetryTest.retry503MixedLimited test because DXTEST_FULL was not set" << endl;
-        return;
-    }
-    checkRetry("503_mixed_limited");
+  if (!DXTEST_FULL) {
+    cerr << "Skipping DXHTTPRequestRetryTest.retry503MixedLimited test because DXTEST_FULL was not set" << endl;
+    return;
+  }
+  checkRetry("503_mixed_limited");
 }
 
 TEST_F(DXHTTPRequestRetryTest, retry5xxMixed) {
-    checkRetry("mixed");
+  checkRetry("mixed");
 }
 
 ////////////
@@ -542,7 +543,7 @@ TEST_F(DXRecordTest, CreateRemoveTest) {
   options["details"] = DXRecordTest::example_JSON;
   DXRecord first_record = DXRecord::newDXRecord(options);
   ASSERT_EQ(DXRecordTest::example_JSON,
-	    first_record.getDetails());
+            first_record.getDetails());
   ASSERT_EQ(first_record.getProjectID(), proj_id);
   string firstID = first_record.getID();
 
@@ -1016,7 +1017,7 @@ TEST_F(DXFileTest, UploadDownloadFiles) {
   ASSERT_FALSE(dxfile.is_open());
 
   EXPECT_EQ(getBaseName(foofilename),
-  	    dxfile.describe(true)["name"].get<string>());
+              dxfile.describe(true)["name"].get<string>());
 
   DXFile::downloadDXFile(dxfile.getID(), tempfilename);
 
@@ -1363,7 +1364,7 @@ TEST_F(DXGTableTest, InvalidSpecTest) {
   vector<JSON> invalid_spec = columns;
   invalid_spec[1]["type"] = "muffins";
   ASSERT_THROW(DXGTable::newDXGTable(invalid_spec),
-	       DXAPIError);
+               DXAPIError);
 }
 
 TEST_F(DXGTableTest, GetRowsTest) {
