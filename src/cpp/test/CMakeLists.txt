@@ -12,10 +12,10 @@ find_package(Boost 1.48 COMPONENTS filesystem date_time REQUIRED)
 # Set default build type, common compiler flags, etc
 include("$ENV{DNANEXUS_HOME}/src/cpp/cmake_include/set_compiler_flags.txt" NO_POLICY_SCOPE)
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..  ../SimpleHttpLib ../dxjson ../dxcpp)
-
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../dxcpp dxcpp)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/gtest gtest)
+
+include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..  ../SimpleHttpLib ../dxjson ../dxcpp ${CURL_INCLUDE_DIRS} ${Boost_INCLUDE_DIR})
 
 # dxcpp_tests
 add_executable(test_dxcpp test_dxcpp.cc)
