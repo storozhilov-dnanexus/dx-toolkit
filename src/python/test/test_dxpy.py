@@ -30,7 +30,7 @@ from requests.packages.urllib3.exceptions import SSLError
 
 import dxpy
 import dxpy_testutil as testutil
-from dxpy.exceptions import (DXAPIError, DXFileError, DXError, DXJobFailureError, ResourceNotFound)
+from dxpy.exceptions import (DXAPIError, DXFileError, DXError, DXJobFailureError, ResourceNotFound, InvalidInput)
 from dxpy.utils import pretty_print, warn, Nonce
 from dxpy.utils.resolver import resolve_path, resolve_existing_path, ResolutionError, is_project_explicit
 
@@ -211,10 +211,47 @@ class TestDXProject(unittest.TestCase):
     def test_remove_multiple_folders(self):
         dxproject = dxpy.DXProject(self.proj_id)
         dxproject.new_folder("/foo/bar", parents=True)
-        dxrecord = dxpy.new_dxrecord(folder="/foo")
+        dxrecord = dxpy.new_dxrecord(name="test_record", folder="/foo")
         dxproject.new_folder("/bar")
-        dxproject.new_folder("/foobar", parents=True)
+        dxproject.new_folder("/barfoo")
+        dxproject.new_folder("/foobar")
+        folder_listing = dxproject.list_folder()
+        self.assertEqual(["/bar", "/barfoo", "/foo", "/foobar"], folder_listing["folders"])
+
+        with self.assertRaises(InvalidInput):
+            dxproject.remove_folders("/foo");
+        # TODO: Check lines below:
+        #with self.assertRaises(InvalidInput):
+        #    dxproject.remove_folders([]);
+        with self.assertRaises(InvalidInput):
+            dxproject.remove_folders(["foo"]);
+        with self.assertRaises(InvalidInput):
+            dxproject.remove_folders(["foo\nbar"]);
+        with self.assertRaises(InvalidInput):
+            dxproject.remove_folders(["foo\tbar"]);
+        # TODO: Check lines below:
+        #with self.assertRaises(InvalidInput):
+        #    dxproject.remove_folders(["/"]);
+        #with self.assertRaises(InvalidInput):
+        #    dxproject.remove_folders(["//"]);
+        #with self.assertRaises(InvalidInput):
+        #    dxproject.remove_folders(["///"]);
+        with self.assertRaises(ResourceNotFound):
+            dxproject.remove_folders(["/fooo", "/bar"]);
+
+        folder_listing = dxproject.list_folder()
+        self.assertEqual(["/bar", "/barfoo", "/foo", "/foobar"], folder_listing["folders"])
+
         dxproject.remove_folders(["/foo", "/bar"])
+        folder_listing = dxproject.list_folder()
+        self.assertEqual(["/barfoo", "/foobar"], folder_listing["folders"])
+
+        dxproject.remove_folders(["/foo", "/barfoo"], True)
+        folder_listing = dxproject.list_folder()
+        self.assertEqual(["/foobar"], folder_listing["folders"])
+
+        with self.assertRaises(ResourceNotFound):
+            dxproject.remove_folders(["/foo", "/bar"]);
 
     def test_move(self):
         dxproject = dxpy.DXProject()
