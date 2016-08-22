@@ -367,6 +367,14 @@ def container_remove_folder(object_id, input_params={}, always_retry=False, **kw
     """
     return DXHTTPRequest('/%s/removeFolder' % object_id, input_params, always_retry=always_retry, **kwargs)
 
+def container_remove_folders(object_id, input_params={}, always_retry=False, **kwargs):
+    """
+    Invokes the /container-xxxx/removeFolders API method.
+
+    For more info, see: https://wiki.dnanexus.com/API-Specification-v1.0.0/Folders-and-Deletion#API-method%3A-%2Fclass-xxxx%2FremoveFolders
+    """
+    return DXHTTPRequest('/%s/removeFolders' % object_id, input_params, always_retry=always_retry, **kwargs)
+
 def container_remove_objects(object_id, input_params={}, always_retry=False, **kwargs):
     """
     Invokes the /container-xxxx/removeObjects API method.
@@ -861,6 +869,14 @@ def project_remove_folder(object_id, input_params={}, always_retry=False, **kwar
     For more info, see: https://wiki.dnanexus.com/API-Specification-v1.0.0/Folders-and-Deletion#API-method%3A-%2Fclass-xxxx%2FremoveFolder
     """
     return DXHTTPRequest('/%s/removeFolder' % object_id, input_params, always_retry=always_retry, **kwargs)
+
+def project_remove_folders(object_id, input_params={}, always_retry=False, **kwargs):
+    """
+    Invokes the /project-xxxx/removeFolders API method.
+
+    For more info, see: https://wiki.dnanexus.com/API-Specification-v1.0.0/Folders-and-Deletion#API-method%3A-%2Fclass-xxxx%2FremoveFolders
+    """
+    return DXHTTPRequest('/%s/removeFolders' % object_id, input_params, always_retry=always_retry, **kwargs)
 
 def project_remove_objects(object_id, input_params={}, always_retry=False, **kwargs):
     """

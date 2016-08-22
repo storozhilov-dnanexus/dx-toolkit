@@ -208,6 +208,14 @@ class TestDXProject(unittest.TestCase):
         listf = dxproject.list_folder()
         self.assertEqual(listf["objects"], [])
 
+    def test_remove_multiple_folders(self):
+        dxproject = dxpy.DXProject(self.proj_id)
+        dxproject.new_folder("/foo/bar", parents=True)
+        dxrecord = dxpy.new_dxrecord(folder="/foo")
+        dxproject.new_folder("/bar")
+        dxproject.new_folder("/foobar", parents=True)
+        dxproject.remove_folders(["/foo", "/bar"])
+
     def test_move(self):
         dxproject = dxpy.DXProject()
         dxproject.new_folder("/a/b/c/d", parents=True)

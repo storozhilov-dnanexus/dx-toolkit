@@ -206,6 +206,29 @@ class DXContainer(DXObject):
                    always_retry=force,  # api call is idempotent under 'force' semantics
                    **kwargs)
 
+    def remove_folders(self, folders, force=False, **kwargs):
+        """
+        :param folders: Array of pull paths to the folders to remove
+        :type folders: list of strings
+        :param force: If True, will suppress errors for folders that do not exist
+        :type force: bool
+
+        Removes the specified folders from the project or container.
+
+        Removal propagates to any hidden objects that become unreachable
+        from any visible object in the same project or container as a
+        result of this operation.
+
+        """
+        api_method = dxpy.api.container_remove_folders
+        if isinstance(self, DXProject):
+            api_method = dxpy.api.project_remove_folders
+
+        api_method(self._dxid,
+                   {"folders": folders, "force": force},
+                   always_retry=force,  # api call is idempotent under 'force' semantics
+                   **kwargs)
+
     def remove_objects(self, objects, force=False, **kwargs):
         """
         :param objects: List of object IDs to remove from the project or container
