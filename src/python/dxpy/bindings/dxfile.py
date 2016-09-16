@@ -476,11 +476,10 @@ class DXFile(DXDataObject):
         self._ensure_write_bufsize(**kwargs)
 
         def write_request(data_for_write_req):
-#            if multithread:
-#                self._async_upload_part_request(data_for_write_req, index=self._cur_part, **kwargs)
-#            else:
-#                self.upload_part(data_for_write_req, self._cur_part, **kwargs)
-            self.upload_part(data_for_write_req, self._cur_part, **kwargs)
+            if multithread:
+                self._async_upload_part_request(data_for_write_req, index=self._cur_part, **kwargs)
+            else:
+                self.upload_part(data_for_write_req, self._cur_part, **kwargs)
             self._cur_part += 1
 
         if self._write_buf.tell() == 0 and self._write_bufsize == len(data):
