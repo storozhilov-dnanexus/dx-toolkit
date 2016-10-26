@@ -446,6 +446,9 @@ class DXFile(DXDataObject):
         self._http_threadpool_futures.add(future)
 
     def _ensure_write_bufsize(self, **kwargs):
+#        print(">>> DXFile::_ensure_write_bufsize(): Method called")
+#        traceback.print_stack();
+
         if self._write_bufsize is not None:
             return
         file_upload_params = dxpy.api.project_describe(
@@ -472,6 +475,9 @@ class DXFile(DXDataObject):
             does not affect where the next :meth:`write` will occur.
 
         '''
+        print(">>> DXFile::write(): Method called, self._cur_part: {}, len(data): {}".format(self._cur_part, len(data)))
+        traceback.print_stack();
+        
         self._ensure_write_bufsize(**kwargs)
 
         def write_request(data_for_write_req):
@@ -586,6 +592,13 @@ class DXFile(DXDataObject):
         defaults to 1. This probably only makes sense if this is the
         only part to be uploaded.
         """
+        print(">>> DXFile::upload_part(): Method called, index: {}, len(data): {}".format(index, len(data)))
+        traceback.print_stack();
+    
+        # AZURE-314: Do not upload a first (single) empty part if region settings do not allow that
+        if index == 1 and len(data) == 0 and not self._empty_last_part_allowed:
+            return
+
         req_input = {}
         if index is not None:
             req_input["index"] = int(index)
