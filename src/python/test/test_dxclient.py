@@ -1222,6 +1222,12 @@ class TestDXWhoami(DXTestCase):
 
 
 class TestDXClientUploadDownload(DXTestCase):
+    def setUp(self):
+        self.wd = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.wd)
+
     def test_dx_upload_download(self):
         with self.assertSubprocessFailure(stderr_regexp='expected the path to be a non-empty string',
                                           exit_code=3):
@@ -1419,6 +1425,25 @@ class TestDXClientUploadDownload(DXTestCase):
                 listing = run("dx ls /destdir/a").split("\n")
                 self.assertIn(os.path.basename(fd2.name), listing)
 
+    def test_dx_upload_empty_file(self):
+        print("Working directory is: '{}'".format(self.wd))
+#        empty_file = testutil.TemporaryFile(dir=self.wd, close=True)
+        empty_file_name = os.path.join(self.wd, "empty_file.txt")
+        open(empty_file_name, 'a').close()
+        print("Empty file name is: '{}'".format(empty_file_name))
+
+        azure_project_id = run("dx new project --region azure:westus --select --brief test-project-azure").strip()
+        print("Azure test project ID is '{}'".format(azure_project_id))
+        run("dx env")
+        run("dx select {}".format(azure_project_id))
+        run("dx env")
+        run("dx describe {}".format(azure_project_id))
+        #run("dx upload {} --wait".format(empty_file_name))
+#        my_env = os.environ.copy()
+#        my_env["_DX_DEBUG"] = "2"
+#        run("_DX_DEBUG=2 dx upload /dev/null")
+        out, err = run("_DX_DEBUG=2 dx upload /dev/null", also_return_stderr=True)
+        self.assertEqual(0, 0)
 
     @unittest.skipUnless(testutil.TEST_RUN_JOBS, "Skipping test that would run jobs")
     def test_dx_download_by_job_id_and_output_field(self):
