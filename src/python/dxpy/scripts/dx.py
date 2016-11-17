@@ -3207,7 +3207,7 @@ def ssh(args, ssh_config_verified=False):
     for i in range(90):
         host = job_desc.get('host')
         host_key = job_desc.get('sshHostKey') or job_desc['properties'].get('ssh_host_rsa_key')
-        ssh_port = job_desc.get('sshPort', default=22)
+        ssh_port = job_desc.get('sshPort') or 22
         if host and host_key:
             break
         else:
