@@ -3203,10 +3203,11 @@ def ssh(args, ssh_config_verified=False):
 
     sys.stdout.write("Resolving job hostname and SSH host key...")
     sys.stdout.flush()
-    host, host_key = None, None
+    host, host_key, ssh_port = None, None, None
     for i in range(90):
         host = job_desc.get('host')
         host_key = job_desc.get('sshHostKey') or job_desc['properties'].get('ssh_host_rsa_key')
+        ssh_port = job_desc.get('sshPort')
         if host and host_key:
             break
         else:
@@ -3274,6 +3275,8 @@ def ssh(args, ssh_config_verified=False):
     if args.ssh_proxy:
         ssh_args += ['-o', 'ProxyCommand=nc -X connect -x {proxy} %h %p'.
                      format(proxy=args.ssh_proxy)]
+    if ssh_port:
+        ssh_args += ['-p', str(ssh_port)]
     ssh_args += args.ssh_args
     exit_code = subprocess.call(ssh_args)
     try:
