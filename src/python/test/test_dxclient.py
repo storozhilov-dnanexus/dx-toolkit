@@ -865,6 +865,65 @@ class TestDXClient(DXTestCase):
                 dx2.sendline("y")
                 dx2.expect("Terminated job", timeout=60)
 
+    def test_dx_ssh_azure(self):
+        for use_alternate_config_dir in [False, True]:
+            dxpy.config["DX_PROJECT_CONTEXT_ID"] = self.azure_project
+            with self.configure_ssh(use_alternate_config_dir=use_alternate_config_dir) as wd:
+                sleep_applet = dxpy.api.applet_new(dict(name="sleep",
+                                                        runSpec={"code": "sleep 1200",
+                                                                 "interpreter": "bash",
+                                                                 "execDepends": [{"name": "dx-toolkit"}]},
+                                                        inputSpec=[], outputSpec=[],
+                                                        dxapi="1.0.0", version="1.0.0",
+                                                        project=self.azure_project))["id"]
+
+                dx = pexpect.spawn("dx run {} --yes --ssh --instance-type azure:mem2_ssd1_x1".format(sleep_applet),
+                                   env=override_environment(HOME=wd))
+                dx.logfile = sys.stdout
+                dx.setwinsize(20, 90)
+                dx.expect("Waiting for job")
+                dx.expect("Resolving job hostname and SSH host key", timeout=1200)
+
+                # Wait for the line displayed between the first and second MOTDs,
+                # since we only care about checking the second set of MOTD lines.
+                # Example of the dividing line:
+                # dnanexus@job-BP90K3Q0X2v81PXXPZj005Zj.dnanex.us (10.0.0.200) - byobu
+                dx.expect(["dnanexus.io \(10.0.0.200\) - byobu",
+                           "dnanex.us \(10.0.0.200\) - byobu"], timeout=120)
+                dx.expect("This is the DNAnexus Execution Environment", timeout=600)
+                # Check for job name (e.g. "Job: sleep")
+                dx.expect("Job: \x1b\[1msleep", timeout=5)
+                # \xf6 is ö
+                dx.expect("Project: dxclient_test_pr\xf6ject".encode(sys_encoding))
+                dx.expect("The job is running in terminal 1.", timeout=5)
+                # Check for terminal prompt and verify we're in the container
+                job_id = dxpy.find_jobs(name="sleep", project=self.azure_project).next()['id']
+                dx.expect(("dnanexus@%s" % job_id), timeout=10)
+
+                expected_history_filename = os.path.join(
+                        os.environ.get("DX_USER_CONF_DIR", os.path.join(wd, ".dnanexus_config")), ".dx_history")
+                self.assertTrue(os.path.isfile(expected_history_filename))
+
+                # Make sure the job can be connected to using 'dx ssh <job id>'
+                dx2 = pexpect.spawn("dx ssh " + job_id, env=override_environment(HOME=wd))
+                dx2.logfile = sys.stdout
+                dx2.setwinsize(20, 90)
+                dx2.expect("Waiting for job")
+                dx2.expect("Resolving job hostname and SSH host key", timeout=1200)
+                dx2.expect(("dnanexus@%s" % job_id), timeout=10)
+                dx2.sendline("whoami")
+                dx2.expect("dnanexus", timeout=10)
+                # Exit SSH session and terminate job
+                dx2.sendline("exit")
+                dx2.expect("bash running")
+                dx2.sendcontrol("c") # CTRL-c
+                dx2.expect("[exited]")
+                dx2.expect("dnanexus@job", timeout=10)
+                dx2.sendline("exit")
+                dx2.expect("still running. Terminate now?")
+                dx2.sendline("y")
+                dx2.expect("Terminated job", timeout=60)
+
     @unittest.skipIf(sys.platform.startswith("win"), "pexpect is not supported")
     @unittest.skipUnless(testutil.TEST_RUN_JOBS, "Skipping test that would run jobs")
     @unittest.skipUnless(testutil.TEST_HTTP_PROXY,
@@ -1094,7 +1153,6 @@ class TestDXClient(DXTestCase):
         error_regex = "Request Time=\[\d{1,15}\.\d{0,8}\], RequestID=\[\d{13}-\d{1,6}\]"
         with self.assertSubprocessFailure(stderr_regexp=error_regex, exit_code=3):
             run("dx api file-InvalidFileID describe")
-
 
 class TestDXNewRecord(DXTestCase):
     def test_new_record_basic(self):
