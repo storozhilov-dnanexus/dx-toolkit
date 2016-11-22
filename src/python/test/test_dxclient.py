@@ -872,12 +872,13 @@ class TestDXClient(DXTestCase):
                 sleep_applet = dxpy.api.applet_new(dict(name="sleep",
                                                         runSpec={"code": "sleep 1200",
                                                                  "interpreter": "bash",
-                                                                 "execDepends": [{"name": "dx-toolkit"}]},
+                                                                 "execDepends": [{"name": "dx-toolkit"}],
+                                                                 "systemRequirements": {"*": {"instanceType": "azure:mem2_ssd1_x1"}}},
                                                         inputSpec=[], outputSpec=[],
                                                         dxapi="1.0.0", version="1.0.0",
                                                         project=self.azure_project))["id"]
 
-                dx = pexpect.spawn("dx run {} --yes --ssh --instance-type azure:mem2_ssd1_x1".format(sleep_applet),
+                dx = pexpect.spawn("dx run {} --yes --ssh".format(sleep_applet),
                                    env=override_environment(HOME=wd))
                 dx.logfile = sys.stdout
                 dx.setwinsize(20, 90)
@@ -1071,7 +1072,8 @@ class TestDXClient(DXTestCase):
             applet_json = dict(name="sleep",
                                runSpec={"code": "sleep 6000",
                                         "interpreter": "bash",
-                                        "execDepends": [{"name": "dx-toolkit"}]},
+                                        "execDepends": [{"name": "dx-toolkit"}],
+                                        "systemRequirements": {"*": {"instanceType": "azure:mem2_ssd1_x1"}}},
                                inputSpec=[], outputSpec=[],
                                dxapi="1.0.0", version="1.0.0",
                                project=self.azure_project)
@@ -1085,7 +1087,7 @@ class TestDXClient(DXTestCase):
                     env=override_environment(HOME=wd))
 
             # Create job using the proxy
-            dx = pexpect.spawn("dx run {a} --yes --ssh --ssh-proxy {h}:{p} --instance-type azure:mem2_ssd1_x1 --debug-on All".
+            dx = pexpect.spawn("dx run {a} --yes --ssh --ssh-proxy {h}:{p} --debug-on All".
                                format(a=sleep_applet,
                                       h=proxy_host,
                                       p=proxy_port),
