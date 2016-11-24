@@ -1102,6 +1102,7 @@ class TestDXClient(DXTestCase):
         with self.assertSubprocessFailure(stderr_regexp=error_regex, exit_code=3):
             run("dx api file-InvalidFileID describe")
 
+
 class TestDXNewRecord(DXTestCase):
     def test_new_record_basic(self):
         run("dx new record -o :foo --verbose")

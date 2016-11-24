@@ -3267,7 +3267,7 @@ def ssh(args, ssh_config_verified=False):
         err_exit(msg.format(h=host, cmd=BOLD("dx ssh {}".format(args.job_id))),
                  exception=DXCLIError())
 
-    print("Connecting to", host)
+    print("Connecting to {}:{}".format(host, ssh_port))
     ssh_args = ['ssh', '-i', os.path.join(dxpy.config.get_user_conf_dir(), 'ssh_id'),
                 '-o', 'HostKeyAlias={}.dnanex.us'.format(args.job_id),
                 '-o', 'UserKnownHostsFile={}'.format(known_hosts_file),
