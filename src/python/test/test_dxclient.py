@@ -808,8 +808,8 @@ class TestDXClient(DXTestCase):
 
     @unittest.skipUnless(testutil.TEST_RUN_JOBS, "Skipping test that would run jobs")
     def test_dx_ssh(self):
-        for project, instance_type in {self.project: "mem1_hdd2_x1", self.azure_project: "azure:mem2_ssd1_x1"}.iteritems():
-        #for project, instance_type in {self.project: "mem1_hdd2_x1"}.iteritems():
+        for project, instance_type in {self.project: "mem2_hdd2_x1", self.azure_project: "azure:mem2_ssd1_x1"}.iteritems():
+        #for project, instance_type in {self.project: "mem2_hdd2_x1"}.iteritems():
         #for project, instance_type in {self.azure_project: "azure:mem2_ssd1_x1"}.iteritems():
             dxpy.config["DX_PROJECT_CONTEXT_ID"] = project
             for use_alternate_config_dir in [False, True]:
