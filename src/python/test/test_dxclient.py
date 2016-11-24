@@ -1069,6 +1069,7 @@ class TestDXClient(DXTestCase):
 
         with self.configure_ssh() as wd:
             launch_squid()
+            dxpy.config["DX_PROJECT_CONTEXT_ID"] = self.azure_project
             applet_json = dict(name="sleep",
                                runSpec={"code": "sleep 6000",
                                         "interpreter": "bash",
@@ -1081,24 +1082,23 @@ class TestDXClient(DXTestCase):
 
             # Test incorrect arguments i.e. --ssh is missing
             with self.assertSubprocessFailure(stderr_regexp="DXCLIError", exit_code=3):
-                run("dx run {a} --yes --ssh-proxy {h}:{p} --debug-on All --project {pr}".format(a=sleep_applet,
-                                                                                                h=proxy_host,
-                                                                                                p=proxy_port,
-                                                                                                pr=self.azure_project),
+                run("dx run {a} --yes --ssh-proxy {h}:{p} --debug-on All".format(a=sleep_applet,
+                                                                                 h=proxy_host,
+                                                                                 p=proxy_port),
                     env=override_environment(HOME=wd))
 
             # Create job using the proxy
-            dx = pexpect.spawn("dx run {a} --yes --ssh --ssh-proxy {h}:{p} --debug-on All --project {pr}".
+            dx = pexpect.spawn("dx run {a} --yes --ssh --ssh-proxy {h}:{p} --debug-on All".
                                format(a=sleep_applet,
                                       h=proxy_host,
-                                      p=proxy_port,
-                                      pr=self.azure_project),
+                                      p=proxy_port),
                                env=override_environment(HOME=wd))
             dx.logfile = sys.stdout
             dx.setwinsize(20, 90)
             dx.expect("The job is running in terminal 1.", timeout=1200)
             # Check for terminal prompt and verify we're in the container
             job_id = dxpy.find_jobs(name="sleep", project=self.azure_project).next()['id']
+            job_ssh_port = dxpy.DXJob(job_id).describe().get('sshPort', 22)
             dx.expect(("dnanexus@%s" % job_id), timeout=10)
             # Cache default ssh command for refactoring
             ssh_proxy_command = "dx ssh --ssh-proxy {h}:{p} {id}".format(h=proxy_host,
@@ -1113,10 +1113,10 @@ class TestDXClient(DXTestCase):
             dx2.expect("[exited]")
             dx2.expect("dnanexus@job", timeout=10)
             # Test proxy connection from worker side
-#            squid_address = run("netstat -plant 2>/dev/null|grep squid3|grep :22|awk '{print $4}'")
-#            squid_port = squid_address.split(':')[1][:-1]
-#            dx2.sendline("netstat -plant 2>/dev/null|grep :{p}|awk '{{print $6}}'".format(p=squid_port))
-#            dx2.expect("ESTABLISHED", timeout=60)
+            squid_address = run("netstat -plant 2>/dev/null|grep squid3|grep :{p}|awk '{{print $4}}'".format(p=job_ssh_port))
+            squid_port = squid_address.split(':')[1][:-1]
+            dx2.sendline("netstat -plant 2>/dev/null|grep :{p}|awk '{{print $6}}'".format(p=squid_port))
+            dx2.expect("ESTABLISHED", timeout=60)
             # Make sure ssh-proxy fails without proxy running
             self.proxy_process.kill()
             with self.assertSubprocessFailure(stderr_regexp="DXCLIError", exit_code=3):
