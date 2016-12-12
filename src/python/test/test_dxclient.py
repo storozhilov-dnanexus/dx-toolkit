@@ -1223,6 +1223,21 @@ class TestDXClientUploadDownload(DXTestCase):
                 run(cmd.format(d=os.path.join("/super", os.path.basename(wd), "a", "б"),
                                f=os.path.basename(fd.name)))
 
+    def test_dx_upload_download_azure(self):
+        #azure_project = dxpy.api.project_new({"name": "test_dx_upload_download_azure", "region": testutil.TEST_AZURE})['id']
+        azure_project = dxpy.api.project_new({"name": "test_dx_upload_download_azure", "region": "azure:westus"})['id']
+        uploaded_data = "0123456789ABCDEF"*64
+        try:
+            with testutil.TemporaryFile() as fd:
+                fd.write(uploaded_data)
+                fd.flush()
+                fd.close()
+                file_id = run("dx upload --brief --wait --project {} {}".format(azure_project, fd.name));
+                downloaded_data = run("dx download -o - {}".format(file_id))
+                self.assertEqual(downloaded_data, uploaded_data)
+        finally:
+            dxpy.api.project_destroy(azure_project, {"terminateJobs": True})
+
     @unittest.skipUnless(testutil.TEST_WITH_AUTHSERVER,
                          'skipping tests that require a running authserver')
     def test_dx_upload_with_upload_perm(self):
